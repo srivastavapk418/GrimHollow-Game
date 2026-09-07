@@ -1,0 +1,19 @@
+{
+  "name": "Grimhollow",
+  "short_name": "Grimhollow",
+  "description": "A dark action-platformer with ten levels and three bosses.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#06050a",
+  "theme_color": "#0a0810",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
