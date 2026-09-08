@@ -573,6 +573,19 @@ check('older saves migrate to permanent double-jump', () => {
   return true;
 });
 
+check('level completion grants XP and can advance player level', () => {
+  game.save.level = 1;
+  game.save.xp = 0;
+  game.save.completed = [];
+  game.save.unlockedLevel = 0;
+  game.startLevel(0, false);
+  game.completeLevel();
+  if (game.save.completed[0] !== true) throw new Error('level was not marked completed');
+  if (game.save.level < 2) throw new Error('player level did not advance from completion XP');
+  if (game.save.xp <= 0) throw new Error('completion XP did not leave progress');
+  return true;
+});
+
 check('level completion unlocks the next level', () => {
   const s = G.Save.load();
   s.unlockedLevel = 0; s.completed = [];
@@ -645,7 +658,7 @@ check('every menu action is handled (no silent no-ops)', () => {
   const screens = [() => game.toTitle(), () => game.toSelect(), () => game.toUpgrade(),
                    () => { game.startLevel(0, false); game.togglePause(); }, () => game.toDeath()];
   for (const mk of screens) { mk(); for (const it of game.menu.items) acts.add(it.act); }
-  const handled = new Set(['continue', 'select', 'title', 'upgrade', 'sound', 'quality', 'wipe',
+  const handled = new Set(['continue', 'select', 'title', 'upgrade', 'sound', 'viewZoom', 'wipe',
                            'level', 'stat', 'resume', 'restart', 'respawn', 'quit', 'next']);
   const unknown = [...acts].filter(a => !handled.has(a));
   if (unknown.length) throw new Error('unhandled menu actions: ' + unknown.join(', '));
@@ -653,15 +666,18 @@ check('every menu action is handled (no silent no-ops)', () => {
   return true;
 });
 
-check('quality settings all resize cleanly', () => {
-  for (const q of ['low', 'med', 'high']) {
-    game.save.settings.quality = q;
-    game.resize();
-    game.startLevel(0, false);
-    game.draw();
-    if (!(game.vw > 0 && game.vh > 0)) throw new Error(q + ' produced viewport ' + game.vw + 'x' + game.vh);
-  }
-  game.save.settings.quality = 'med'; game.resize();
+check('view zoom changes gameplay camera without resizing menus', () => {
+  const beforeW = game.vw, beforeH = game.vh;
+  game.save.settings.viewZoom = 0.85;
+  game.startLevel(0, false);
+  if (Math.abs(game.camera.zoom - 0.85) > 0.001) throw new Error('85% view zoom not applied');
+  game.save.settings.viewZoom = 1.15;
+  game.startLevel(0, false);
+  if (Math.abs(game.camera.zoom - 1.15) > 0.001) throw new Error('115% view zoom not applied');
+  game.toTitle(); game.draw();
+  if (game.vw !== beforeW || game.vh !== beforeH) throw new Error('view zoom changed menu viewport');
+  game.save.settings.viewZoom = 1;
+  game.resize();
   return true;
 });
 
@@ -669,7 +685,7 @@ check('touch controls map to real input actions', () => {
   const layout = G.UI.touchLayout(900, 500);
   const buttons = Object.keys(layout).filter(k => layout[k] && typeof layout[k] === 'object' && layout[k].act);
   if (!buttons.length) throw new Error('no touch buttons');
-  const valid = ['left', 'right', 'up', 'down', 'jump', 'attack', 'dash', 'block', 'potion', 'pause'];
+  const valid = ['left', 'right', 'jump', 'attack', 'dash', 'block', 'potion', 'pause'];
   for (const k of buttons) {
     const b = layout[k];
     if (valid.indexOf(b.act) < 0) throw new Error('touch button "' + b.act + '" is not a known action');

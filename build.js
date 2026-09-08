@@ -13,7 +13,7 @@ const ROOT = __dirname;
 const SRC = path.join(ROOT, 'src');
 const DIST = path.join(ROOT, 'dist');
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.3';
 const CACHE_NAME = `grimhollow-v${VERSION}`;
 
 function log(s) { process.stdout.write(s + '\n'); }

@@ -196,21 +196,22 @@ G.UI = (function () {
   /* ------------------------------------------------------------- touch --- */
   /* Layout is computed from the viewport so it works in any aspect ratio. */
   function touchLayout(vw, vh) {
-    var s = Math.max(52, Math.min(vw, vh) * 0.115);
-    var pad = s * 0.42;
-    var by = vh - pad - s;
+    // Mobile controls use only the actions that are meaningful for gameplay.
+    // The old UP/DOWN buttons duplicated navigation and crowded the left side.
+    var s = Math.max(50, Math.min(vw, vh) * 0.105);
+    var gap = s * 0.18;
+    var edge = Math.max(16, s * 0.34);
+    var bottom = Math.max(16, s * 0.26);
+    var by = vh - bottom - s;
     return {
-      s: s,
-      left:   { x: pad,                 y: by,             w: s, h: s, act: 'left',   icon: '◀' },
-      right:  { x: pad + s * 1.15,      y: by,             w: s, h: s, act: 'right',  icon: '▶' },
-      down:   { x: pad + s * 0.575,     y: by - s * 1.15,  w: s, h: s, act: 'down',   icon: '▼' },
-      up:     { x: pad + s * 0.575,     y: by - s * 2.30,  w: s, h: s, act: 'up',     icon: '▲' },
-      attack: { x: vw - pad - s * 1.15, y: by,             w: s, h: s, act: 'attack', icon: 'ATK', col: '#c4283c' },
-      jump:   { x: vw - pad - s * 2.30, y: by - s * 0.45,  w: s, h: s, act: 'jump',   icon: 'JMP', col: '#4e8ad8' },
-      dash:   { x: vw - pad - s * 1.15, y: by - s * 1.15,  w: s, h: s, act: 'dash',   icon: 'DSH', col: '#4ec8a8' },
-      block:  { x: vw - pad - s * 2.30, y: by - s * 1.60,  w: s, h: s, act: 'block',  icon: 'GRD', col: '#c8a24e' },
-      potion: { x: vw - pad - s * 0.55, y: by - s * 2.40,  w: s * 0.9, h: s * 0.9, act: 'potion', icon: '+', col: '#4ec87a' },
-      pause:  { x: vw - pad - s * 0.75, y: pad * 0.6,      w: s * 0.75, h: s * 0.75, act: 'pause', icon: '‖' }
+      left:   { x: edge, y: by, w: s, h: s, act: 'left', icon: '◀' },
+      right:  { x: edge + s + gap, y: by, w: s, h: s, act: 'right', icon: '▶' },
+      jump:   { x: vw - edge - s * 2.20, y: by - s * 0.48, w: s, h: s, act: 'jump', icon: 'JMP', col: '#4e8ad8' },
+      dash:   { x: vw - edge - s * 1.10, y: by - s * 1.10, w: s, h: s, act: 'dash', icon: 'DSH', col: '#4ec8a8' },
+      block:  { x: vw - edge - s * 2.20, y: by - s * 1.56, w: s, h: s, act: 'block', icon: 'GRD', col: '#c8a24e' },
+      attack: { x: vw - edge - s * 1.10, y: by, w: s, h: s, act: 'attack', icon: 'ATK', col: '#c4283c' },
+      potion: { x: vw - edge - s * 0.12, y: by - s * 2.10, w: s * 0.82, h: s * 0.82, act: 'potion', icon: '+', col: '#4ec87a' },
+      pause:  { x: vw - edge - s * 0.82, y: Math.max(12, edge * 0.48), w: s * 0.72, h: s * 0.72, act: 'pause', icon: '‖' }
     };
   }
 
@@ -526,9 +527,13 @@ G.UI = (function () {
         size: Math.min(13, vw * 0.019), align: 'center', col: C.gold, weight: '600'
       });
 
-      var mw = Math.min(340, vw * 0.5);
-      var my = vh * 0.56;
-      g.menu.draw(ctx, (vw - mw) * 0.5, my, mw, 4, { rowH: 38, size: 18 });
+      var mw = Math.min(360, Math.max(280, vw * 0.58));
+      var rowH = Math.max(27, Math.min(38, (vh - 190) / Math.max(1, g.menu.items.length) - 4));
+      var gap = rowH <= 30 ? 2 : 4;
+      var menuH = g.menu.items.length * rowH + Math.max(0, g.menu.items.length - 1) * gap;
+      var my = Math.max(112, Math.min(vh * 0.56, vh - menuH - 24));
+      if (my + menuH > vh - 20) my = Math.max(86, vh - menuH - 20);
+      g.menu.draw(ctx, (vw - mw) * 0.5, my, mw, gap, { rowH: rowH, size: rowH < 31 ? 15 : 18 });
 
       txt(ctx, 'W/A/S/D or arrows  ·  SPACE jump  ·  J attack  ·  SHIFT dash  ·  K guard  ·  L potion',
         vw * 0.5, vh - 34, { size: 11.5, align: 'center', col: C.faint });

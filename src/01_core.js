@@ -466,7 +466,7 @@ G.Save = (function () {
       potions: 3, maxPotions: 3,
       secrets: [],            // array of "levelId:index" strings
       totalDeaths: 0, totalTime: 0,
-      settings: { muted: false, shake: 1, quality: 'med', showTouch: 'auto' }
+      settings: { muted: false, shake: 1, viewZoom: 1, showTouch: 'auto' }
     };
   }
 
@@ -528,8 +528,8 @@ G.Save = (function () {
     if (d.settings && typeof d.settings === 'object') {
       b.settings.muted = !!d.settings.muted;
       b.settings.shake = num(d.settings.shake, 1, 0, 2);
-      b.settings.quality = (['low', 'med', 'high'].indexOf(d.settings.quality) >= 0)
-        ? d.settings.quality : 'med';
+      var vz = num(d.settings.viewZoom, 1, 0.85, 1.15);
+      b.settings.viewZoom = [0.85, 1, 1.15].indexOf(vz) >= 0 ? vz : 1;
       b.settings.showTouch = (['auto', 'on', 'off'].indexOf(d.settings.showTouch) >= 0)
         ? d.settings.showTouch : 'auto';
     }

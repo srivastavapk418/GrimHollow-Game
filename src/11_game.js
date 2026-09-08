@@ -184,12 +184,14 @@ G.Game = (function () {
   Game.prototype.resize = function () {
     var w = window.innerWidth, h = window.innerHeight;
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
-    // Internal resolution is capped so weak phones stay at 60fps; the canvas is
-    // then CSS-stretched to fill the window.
-    var maxW = this.save.settings.quality === 'low' ? 860 : (this.save.settings.quality === 'high' ? 1600 : 1200);
-    var scale = Math.min(1, maxW / w);
-    this.vw = Math.round(w * scale);
-    this.vh = Math.round(h * scale);
+    // Keep the game's logical viewport independent from user-facing zoom.
+    // View zoom changes the camera only during gameplay; it must never resize
+    // or scale the title/settings screens.  Use the high-detail render path
+    // consistently so there is no misleading quality toggle.
+    var maxW = 1600;
+    var scale = Math.min(1, maxW / Math.max(1, w));
+    this.vw = Math.max(320, Math.round(w * scale));
+    this.vh = Math.max(240, Math.round(h * scale));
     this.canvas.width = this.vw;
     this.canvas.height = this.vh;
     this.canvas.style.width = w + 'px';
@@ -217,7 +219,7 @@ G.Game = (function () {
       { label: 'THE ROAD', act: 'select', right: (this.save.unlockedLevel + 1) + '/' + G.LEVELS.length },
       { label: 'ATTUNEMENT', act: 'upgrade', right: this.availablePoints() > 0 ? '+' + this.availablePoints() : '' },
       { label: this.save.settings.muted ? 'SOUND: OFF' : 'SOUND: ON', act: 'sound' },
-      { label: 'QUALITY: ' + (this.save.settings.quality || 'med').toUpperCase(), act: 'quality' },
+      { label: 'VIEW ZOOM: ' + Math.round(this.getViewZoom() * 100) + '%', act: 'viewZoom' },
       { label: 'ERASE PROGRESS', act: 'wipe' }
     ]);
     G.Audio.music('calm');
@@ -333,12 +335,29 @@ G.Game = (function () {
       });
     }
 
+    this.camera.zoom = this.getViewZoom();
+    this.camera.zoomTarget = this.getViewZoom();
     this.camera.snapTo(this.player.body.cx(), this.player.body.cy());
     this.camera.world = this.world;
     this.state = STATE.PLAY;
     this.overT = 0;
     G.Audio.music(d.boss ? 'tense' : 'calm');
     this.showTip(d.hint, 4.5);
+  };
+
+  Game.prototype.getViewZoom = function () {
+    var z = Number(this.save && this.save.settings && this.save.settings.viewZoom);
+    return (z === 0.85 || z === 1 || z === 1.15) ? z : 1;
+  };
+
+  Game.prototype.setViewZoom = function (z) {
+    z = Number(z);
+    if (z !== 0.85 && z !== 1 && z !== 1.15) z = 1;
+    this.save.settings.viewZoom = z;
+    G.Save.save(this.save);
+    if (this.state === STATE.PLAY && this.camera) {
+      this.camera.zoomTarget = z;
+    }
   };
 
   Game.prototype.restartLevel = function () { this.startLevel(this.levelIndex, false); };
@@ -424,9 +443,9 @@ G.Game = (function () {
 
   Game.prototype.onParry = function () {
     this.comboTimer = 2.2;
-    this.camera.zoomTarget = 1.04;
+    this.camera.zoomTarget = this.getViewZoom() * 1.04;
     var self = this;
-    setTimeout(function () { self.camera.zoomTarget = 1; }, 150);
+    setTimeout(function () { self.camera.zoomTarget = self.getViewZoom(); }, 150);
   };
 
   Game.prototype.onEnemyKilled = function (e) {
@@ -454,7 +473,7 @@ G.Game = (function () {
     this.runDeaths++;
     this.save.totalDeaths++;
     G.Save.save(this.save);
-    this.camera.zoomTarget = 1.10;
+    this.camera.zoomTarget = this.getViewZoom() * 1.10;
     var self = this;
     setTimeout(function () {
       if (self.player.dead && self.state === STATE.PLAY) self.toDeath();
@@ -464,7 +483,7 @@ G.Game = (function () {
   Game.prototype.toDeath = function () {
     this.state = STATE.DEAD;
     this.overT = 0;
-    this.camera.zoomTarget = 1;
+    this.camera.zoomTarget = this.getViewZoom();
     var hasCp = this.checkpoint && this.checkpoint.id >= 0;
     this.menu.set([
       { label: hasCp ? 'RISE AT CHECKPOINT' : 'RISE', act: 'respawn' },
@@ -479,6 +498,12 @@ G.Game = (function () {
     var i = this.levelIndex;
     this.save.completed[i] = true;
     if (i + 1 > this.save.unlockedLevel && i + 1 < G.LEVELS.length) this.save.unlockedLevel = i + 1;
+    // Every cleared stage grants a meaningful completion reward in addition
+    // to enemy XP.  This makes campaign progress visible even when a player
+    // skips optional fights, while still allowing the normal XP curve to
+    // determine when the player level actually advances.
+    var clearXp = 125 + i * 25;
+    this.grantXp(clearXp, this.player.body.cx(), this.player.body.y);
     this.save.totalTime += this.runTime;
     G.Save.save(this.save);
     G.Audio.play('victory');
@@ -595,12 +620,10 @@ G.Game = (function () {
         G.Save.save(this.save);
         if (this.state === STATE.TITLE) this.toTitle(); else this.togglePauseMenuRefresh();
         break;
-      case 'quality': {
-        var order = ['low', 'med', 'high'];
-        var cur = order.indexOf(this.save.settings.quality || 'med');
-        this.save.settings.quality = order[(cur + 1) % order.length];
-        G.Save.save(this.save);
-        this.resize();
+      case 'viewZoom': {
+        var zooms = [0.85, 1, 1.15];
+        var cur = zooms.indexOf(this.getViewZoom());
+        this.setViewZoom(zooms[(cur + 1) % zooms.length]);
         this.toTitle();
         break;
       }
@@ -829,8 +852,8 @@ G.Game = (function () {
     var nearExit = Math.abs(b.cx() - ex) < 34 && Math.abs(b.y + b.h - ey) < 70;
     if (nearExit) {
       if (this.exitOpen) {
-        this.prompt = 'W  /  ↑   enter the gate';
-        if (G.Input.down('up')) {
+        this.prompt = G.Input.hasTouch() ? 'JMP  enter the gate' : 'W  /  ↑   enter the gate';
+        if (G.Input.down('up') || G.Input.pressed('jump') || G.Input.down('jump')) {
           G.Audio.play('door');
           this.completeLevel();
         }
@@ -992,7 +1015,7 @@ G.Game = (function () {
       var col = pu.kind === 'gold' ? [255, 200, 90] : pu.kind === 'potion' ? [90, 230, 140] : [255, 220, 140];
       this.lights.push({ x: pu.x, y: pu.y, r: pu.kind === 'relic' ? 200 : 60, col: col, a: 0.5 });
     }
-    this.lightPass.render(this.lights, cam, bio.ambient, vw, vh, this.save.settings.quality);
+    this.lightPass.render(this.lights, cam, bio.ambient, vw, vh, 'high');
     this.lightPass.composite(ctx, vw, vh);
 
     /* 4. float text sits above lighting so damage numbers stay legible */
@@ -1002,7 +1025,7 @@ G.Game = (function () {
     G.Post.apply(ctx, vw, vh, {
       flash: this.flash,
       fog: bio.fog,
-      quality: this.save.settings.quality,
+      quality: 'high',
       lowHealth: this.player.dead ? 0 : Math.max(0, 1 - (this.player.hp / this.player.maxHp) / 0.3) * 0.8
     });
 
