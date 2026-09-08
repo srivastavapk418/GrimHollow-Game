@@ -10,6 +10,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Grimhollow</title>
 <link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a0810'/%3E%3Cpath d='M6 20 L10 9 L13 15 L16 7 L19 15 L22 9 L26 20 Z' fill='%23e0b64a'/%3E%3C/svg%3E">
 <style>
   :root { color-scheme: dark; }
@@ -240,6 +241,7 @@ G.Input = (function () {
   var touch = {};        // virtual button state set by on-screen controls
   var pad = null, padPrev = {};
   var hasTouch = false;
+  var lastWasKey = false;
 
   function codeToActions(code) {
     var out = [];
@@ -253,6 +255,7 @@ G.Input = (function () {
     if (acts.length) e.preventDefault();
     if (e.repeat) return;
     anyKey = true;
+    if (acts.length) lastWasKey = true;
     for (var i = 0; i < acts.length; i++) {
       if (!down[acts[i]]) pressed[acts[i]] = true;
       down[acts[i]] = true;
@@ -299,12 +302,14 @@ G.Input = (function () {
       hasTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
     },
     hasTouch: function () { return hasTouch; },
+    touchActive: function () { return hasTouch && !lastWasKey; },
     // called by the touch overlay
     setTouch: function (action, isDown) {
       if (isDown && !touch[action] && !down[action]) pressed[action] = true;
       if (!isDown && touch[action]) released[action] = true;
       touch[action] = isDown;
       hasTouch = true;
+      if (isDown) lastWasKey = false;
     },
     poll: function () { pollPad(); },
     down: function (a) { return !!(down[a] || touch[a]); },
@@ -559,6 +564,7 @@ G.Save = (function () {
   function blank() {
     return {
       unlockedLevel: 0,       // 0-based index of the furthest level you may enter
+      lastStage: 0,           // 0-based index of the most recently entered stage
       completed: [],          // completed[levelIndex] = true
       xp: 0, level: 1, gold: 0,
       stats: { vitality: 0, power: 0, speed: 0, stamina: 0, fortune: 0, focus: 0 },
@@ -588,6 +594,7 @@ G.Save = (function () {
     }
 
     b.unlockedLevel = Math.floor(num(d.unlockedLevel, 0, 0, 999));
+    b.lastStage     = Math.floor(num(d.lastStage, Math.min(b.unlockedLevel, 999), 0, 999));
     b.xp            = Math.floor(num(d.xp, 0, 0));
     b.level         = Math.floor(num(d.level, 1, 1, 999));
     b.gold          = Math.floor(num(d.gold, 0, 0));
@@ -3069,6 +3076,13 @@ G.Enemy = (function () {
         var guardDamage = amount * 0.35;
         if (guardDamage < this.poise) {
           this.poise -= guardDamage;
+          // Armor blocks the hit's full force, but never makes an enemy
+          // literally unkillable. A small chip-through portion lets sustained
+          // attacks eventually finish shielded enemies even without a poise break.
+          var chip = amount * (opts.heavy ? 0.22 : 0.12);
+          this.hp -= chip;
+          this.hurtFlash = 1;
+          if (this.hp <= 0) { this.die(dirX); return 'hit'; }
           return 'blocked';
         }
         amount = Math.max(0, amount - this.poise / 0.35);
@@ -6251,17 +6265,17 @@ G.Levels = {
   validate: function () {
     var problems = [];
     for (var i = 0; i < G.LEVELS.length; i++) {
-      var d = G.LEVELS[i];
-      var w;
+      var d = G.LEVELS[i], w;
       try { w = this.world(i); }
       catch (e) { problems.push('L' + d.id + ' build threw: ' + e.message); continue; }
       var K = G.K, T = G.T;
-
       function solidAt(tx, ty) { return w.at(tx, ty) === T.SOLID; }
-      function freeBody(tx, ty) {
-        // 1x2 tile clearance for a standing actor whose feet are at row ty
-        return !solidAt(tx, ty - 1) && !solidAt(tx, ty - 2);
+      function embeddedBody(tx, ty, hPx) {
+        var r0 = Math.floor((ty * K.TILE - hPx + 3) / K.TILE);
+        for (var r = r0; r <= ty - 1; r++) if (solidAt(tx, r)) return true;
+        return false;
       }
+      function freeBody(tx, ty, hPx) { return !embeddedBody(tx, ty, hPx || 42); }
       function grounded(tx, ty) { return solidAt(tx, ty) || w.at(tx, ty) === T.PLAT; }
 
       if (!d.spawn) problems.push('L' + d.id + ' has no spawn');
@@ -6272,34 +6286,45 @@ G.Levels = {
       if (!d.exit) problems.push('L' + d.id + ' has no exit');
       else if (!freeBody(d.exit[0], d.exit[1])) problems.push('L' + d.id + ' exit is inside geometry at ' + d.exit);
 
-      var lists = [['enemies', d.enemies], ['pickups', d.pickups]];
-      for (var li = 0; li < lists.length; li++) {
-        var arr = lists[li][1] || [];
-        for (var j = 0; j < arr.length; j++) {
-          var e = arr[j];
-          if (e.x < 1 || e.x >= d.w - 1 || e.y < 1 || e.y >= d.h) {
-            problems.push('L' + d.id + ' ' + lists[li][0] + '[' + j + '] out of bounds (' + e.x + ',' + e.y + ')');
-          } else if (!freeBody(e.x, e.y)) {
-            problems.push('L' + d.id + ' ' + lists[li][0] + '[' + j + '] embedded in rock (' + e.x + ',' + e.y + ')');
-          }
+      var arr = d.enemies || [];
+      for (var j = 0; j < arr.length; j++) {
+        var e = arr[j];
+        var et = (G.Enemy && G.Enemy.TYPES && G.Enemy.TYPES[e.t]) || null;
+        if (!et) { problems.push('L' + d.id + ' enemies[' + j + '] unknown type "' + e.t + '"'); continue; }
+        if (e.x < 1 || e.x >= d.w - 1 || e.y < 1 || e.y >= d.h) {
+          problems.push('L' + d.id + ' enemies[' + j + '] out of bounds (' + e.x + ',' + e.y + ')');
+        } else if (embeddedBody(e.x, e.y, et.h)) {
+          problems.push('L' + d.id + ' enemies[' + j + '] embedded in rock (' + e.x + ',' + e.y + ')');
+        } else if (!et.flying && !grounded(e.x, e.y)) {
+          var floor = -1;
+          for (var fy = e.y; fy < d.h; fy++) if (grounded(e.x, fy)) { floor = fy; break; }
+          if (floor < 0) problems.push('L' + d.id + ' enemies[' + j + '] would fall out of the world (' + e.x + ',' + e.y + ')');
         }
       }
-      if (d.checkpoints) {
-        for (var c = 0; c < d.checkpoints.length; c++) {
-          var cp = d.checkpoints[c];
-          if (!freeBody(cp[0], cp[1])) problems.push('L' + d.id + ' checkpoint[' + c + '] embedded (' + cp + ')');
+      var pk = d.pickups || [];
+      for (var p2 = 0; p2 < pk.length; p2++) {
+        var pu = pk[p2];
+        if (pu.x < 1 || pu.x >= d.w - 1 || pu.y < 1 || pu.y >= d.h) {
+          problems.push('L' + d.id + ' pickups[' + p2 + '] out of bounds (' + pu.x + ',' + pu.y + ')');
+        } else if (embeddedBody(pu.x, pu.y, 20)) {
+          problems.push('L' + d.id + ' pickups[' + p2 + '] embedded in rock (' + pu.x + ',' + pu.y + ')');
         }
+      }
+      if (d.checkpoints) for (var c = 0; c < d.checkpoints.length; c++) {
+        var cp = d.checkpoints[c];
+        if (!freeBody(cp[0], cp[1])) problems.push('L' + d.id + ' checkpoint[' + c + '] embedded (' + cp + ')');
+        else if (!grounded(cp[0], cp[1])) problems.push('L' + d.id + ' checkpoint[' + c + '] has no floor (' + cp + ')');
       }
       if (d.relic && !freeBody(d.relic.x, d.relic.y)) problems.push('L' + d.id + ' relic embedded');
       if (d.boss) {
         if (!d.arena) problems.push('L' + d.id + ' has a boss but no arena');
-        if (!freeBody(d.boss.x, d.boss.y)) problems.push('L' + d.id + ' boss spawn embedded');
+        if (embeddedBody(d.boss.x, d.boss.y, 72)) problems.push('L' + d.id + ' boss spawn embedded');
+        if (!grounded(d.boss.x, d.boss.y)) problems.push('L' + d.id + ' boss spawn has no floor');
       }
     }
     return problems;
   }
 };
-
 
 /* ==== 10_ui.js ====================================================== */
 /* ==========================================================================
@@ -6588,13 +6613,27 @@ G.UI = (function () {
       ctx.beginPath();
       ctx.ellipse(b.x + b.w * 0.5, b.y + b.h * 0.5, b.w * 0.5, b.h * 0.5, 0, 0, 6.2832);
       ctx.fill();
-      ctx.globalAlpha = on ? 0.98 : 0.55;
-      ctx.strokeStyle = '#0b0a10'; ctx.lineWidth = Math.max(1.5, Math.min(b.w, b.h) * 0.025); ctx.stroke();
-      ctx.globalAlpha = on ? 1 : 0.78;
-      txt(ctx, b.icon, b.x + b.w * 0.5, b.y + b.h * 0.5 + (b.icon.length > 1 ? Math.min(6, b.h * 0.12) : Math.min(7, b.h * 0.14)), {
-        size: b.icon.length > 1 ? Math.min(b.w, b.h) * 0.25 : Math.min(b.w, b.h) * 0.38,
-        align: 'center', col: '#0b0a10', weight: '800', stroke: false
-      });
+      ctx.globalAlpha = on ? 0.98 : 0.78;
+      /* Draw geometric directional/pause glyphs as paths. Unicode arrows and
+         the pause symbol can become tofu boxes on Android fonts. Keep all
+         existing Live control positions/sizing; this changes glyph rendering only. */
+      if (b.act === 'left' || b.act === 'right' || b.act === 'up' || b.act === 'down' || b.act === 'pause') {
+        var cx = b.x + b.w * 0.5, cy = b.y + b.h * 0.5;
+        var t = Math.min(b.w, b.h) * 0.22;
+        ctx.fillStyle = '#0b0a10';
+        ctx.beginPath();
+        if (b.act === 'left') { ctx.moveTo(cx + t * 0.7, cy - t); ctx.lineTo(cx + t * 0.7, cy + t); ctx.lineTo(cx - t * 0.8, cy); }
+        else if (b.act === 'right') { ctx.moveTo(cx - t * 0.7, cy - t); ctx.lineTo(cx - t * 0.7, cy + t); ctx.lineTo(cx + t * 0.8, cy); }
+        else if (b.act === 'up') { ctx.moveTo(cx - t, cy + t * 0.7); ctx.lineTo(cx + t, cy + t * 0.7); ctx.lineTo(cx, cy - t * 0.8); }
+        else if (b.act === 'down') { ctx.moveTo(cx - t, cy - t * 0.7); ctx.lineTo(cx + t, cy - t * 0.7); ctx.lineTo(cx, cy + t * 0.8); }
+        else { ctx.rect(cx - t * 0.72, cy - t * 0.85, t * 0.5, t * 1.7); ctx.rect(cx + t * 0.22, cy - t * 0.85, t * 0.5, t * 1.7); }
+        ctx.closePath(); ctx.fill();
+      } else {
+        txt(ctx, b.icon, b.x + b.w * 0.5, b.y + b.h * 0.5 + (b.icon.length > 1 ? Math.min(6, b.h * 0.12) : Math.min(7, b.h * 0.14)), {
+          size: b.icon.length > 1 ? Math.min(b.w, b.h) * 0.25 : Math.min(b.w, b.h) * 0.38,
+          align: 'center', col: '#0b0a10', weight: '800', stroke: false
+        });
+      }
       // subtle highlight gives the controls a glassy, more game-like finish
       ctx.globalAlpha = on ? 0.22 : 0.10;
       ctx.fillStyle = '#fff';
@@ -6607,7 +6646,7 @@ G.UI = (function () {
     var L = touchLayout(vw, vh, settings);
     for (var k in L) {
       var b = L[k], cx = b.x + b.w * 0.5, cy = b.y + b.h * 0.5;
-      var rx = b.w * 0.62, ry = b.h * 0.62;
+      var rx = b.w * (k === 'pause' ? 0.50 : 0.62), ry = b.h * (k === 'pause' ? 0.50 : 0.62);
       if (((px - cx) / rx) * ((px - cx) / rx) + ((py - cy) / ry) * ((py - cy) / ry) <= 1) return b.act;
     }
     return null;
@@ -6623,7 +6662,8 @@ G.UI = (function () {
     var hb = lay.hud.health;
     var hx = hb.x * vw, hy = hb.y * vh, bw = hb.w * vw, hh = hb.h * vh;
     var bh = M.clamp(hh * 0.27, 11, 22);
-    panel(ctx, hx - 6, hy - 6, bw + 12, hh + 12, { r: 7 });
+    var hudPanelX = hx - 6, hudPanelY = hy - 6, hudPanelW = bw + 12, hudPanelH = hh + 12;
+    panel(ctx, hudPanelX, hudPanelY, hudPanelW, hudPanelH, { r: 7 });
 
     var hpFrac = p.hp / p.maxHp;
     bar(ctx, hx, hy, bw, bh, hpFrac, C.hp, C.hpBack, { ghost: g.hpGhost, ghostCol: 'rgba(255,180,180,0.30)' });
@@ -6645,20 +6685,20 @@ G.UI = (function () {
       ctx.save();
       ctx.globalAlpha = have ? 1 : 0.28;
       ctx.fillStyle = have ? '#4ec87a' : '#2a2a30';
-      roundRect(ctx, pad + i * 16, py, 11, 15, 3); ctx.fill();
+      roundRect(ctx, hx + i * 16, py, 11, 15, 3); ctx.fill();
       ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 1.5;
-      roundRect(ctx, pad + i * 16, py, 11, 15, 3); ctx.stroke();
+      roundRect(ctx, hx + i * 16, py, 11, 15, 3); ctx.stroke();
       ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.fillRect(pad + i * 16 + 2, py + 2, 3, 9);
+      ctx.fillRect(hx + i * 16 + 2, py + 2, 3, 9);
       ctx.restore();
     }
-    txt(ctx, 'L', pad + s.maxPotions * 16 + 6, py + 12, { size: 10, col: C.faint });
+    txt(ctx, 'L', hx + s.maxPotions * 16 + 6, py + 12, { size: 10, col: C.faint });
 
     /* --- level / xp --- */
     var xb = lay.hud.xp;
     var xx = xb.x * vw, xy = xb.y * vh, xw = xb.w * vw, xh = xb.h * vh;
     panel(ctx, xx - 8, xy - 6, xw + 16, xh + 12, { r: 7 });
-    txt(ctx, 'LV ' + s.level, xx, xy + Math.max(14, xh * 0.34), { size: Math.max(13, Math.min(19, xh * 0.38)), col: C.gold, weight: '800' });
+    txt(ctx, 'LEVEL ' + (g.levelIndex + 1), xx, xy + Math.max(14, xh * 0.34), { size: Math.max(12, Math.min(18, xh * 0.34)), col: C.gold, weight: '800' });
     var need = g.xpForLevel(s.level);
     var have2 = s.xp;
     txt(ctx, have2 + ' / ' + need, xx + xw, xy + Math.max(14, xh * 0.34), { size: 11, align: 'right', col: C.dim });
@@ -6735,7 +6775,9 @@ G.UI = (function () {
       });
     }
 
-    if (G.Input.hasTouch() && s.settings.showTouch !== false) drawTouch(ctx, vw, vh, g);
+    var stMode = s.settings.showTouch || 'auto';
+    var wantPad = stMode === 'on' ? true : stMode === 'off' ? false : G.Input.touchActive();
+    if (wantPad) drawTouch(ctx, vw, vh, g);
   }
 
   function drawBossBar(ctx, g, boss) {
@@ -6992,10 +7034,14 @@ G.UI = (function () {
       if (my + menuH > vh - 20) my = Math.max(86, vh - menuH - 20);
       g.menu.draw(ctx, (vw - mw) * 0.5, my, mw, gap, { rowH: rowH, size: rowH < 31 ? 15 : 18 });
 
-      txt(ctx, 'W/A/S/D or arrows  ·  SPACE jump  ·  J attack  ·  SHIFT dash  ·  K guard  ·  L potion',
-        vw * 0.5, vh - 34, { size: 11.5, align: 'center', col: C.faint });
-      txt(ctx, 'ENTER / click to select   ·   gamepad supported',
-        vw * 0.5, vh - 18, { size: 11, align: 'center', col: 'rgba(95,89,79,0.75)' });
+      if (G.Input.hasTouch()) {
+        txt(ctx, 'TAP A ROW TO SELECT', vw * 0.5, vh - 26, { size: 11.5, align: 'center', col: C.faint });
+      } else {
+        txt(ctx, 'W/A/S/D or arrows  ·  SPACE jump  ·  J attack  ·  SHIFT dash  ·  K guard  ·  L potion',
+          vw * 0.5, vh - 34, { size: 11.5, align: 'center', col: C.faint });
+        txt(ctx, 'ENTER / click to select   ·   gamepad supported',
+          vw * 0.5, vh - 18, { size: 11, align: 'center', col: 'rgba(95,89,79,0.75)' });
+      }
     },
 
     levelSelect: function (ctx, g) {
@@ -7072,7 +7118,15 @@ G.UI = (function () {
         });
       }
 
-      txt(ctx, 'ENTER  begin   ·   U  upgrades   ·   ESC  back',
+      // Mobile-safe BACK action: the custom node list above does not use
+      // Menu.draw(), so give BACK its own real hit rectangle and visual row.
+      var backY = top + n * rowH + 4;
+      g.menu.rects.push({ x: mx, y: backY, w: mw, h: Math.max(28, rowH - 4) });
+      txt(ctx, 'BACK', mx + 22, backY + Math.max(18, rowH * 0.5 + 5), {
+        size: 15.5, col: C.dim, weight: '700'
+      });
+
+      txt(ctx, G.Input.hasTouch() ? 'TAP A ROW TO SELECT' : 'ENTER  begin   ·   U  upgrades   ·   ESC  back',
         vw * 0.5, vh - 34, { size: 12, align: 'center', col: C.dim });
       if (G.LEVELS[g.menu.index] && G.LEVELS[g.menu.index].hint && g.menu.index <= s.unlockedLevel) {
         txt(ctx, '"' + G.LEVELS[g.menu.index].hint + '"', vw * 0.5, vh - 56,
@@ -7129,11 +7183,18 @@ G.UI = (function () {
         txt(ctx, '' + val, mx + mw - 16, y + 28, { size: 15, align: 'right', col: st.col, weight: '800' });
 
         if (sel && pts > 0) {
-          txt(ctx, 'ENTER  +1', mx + mw - 16, y + 44, { size: 10, align: 'right', col: C.gold, weight: '700' });
+          txt(ctx, G.Input.hasTouch() ? '+1' : 'ENTER  +1', mx + mw - 16, y + 44, { size: 10, align: 'right', col: C.gold, weight: '700' });
         }
       }
 
-      txt(ctx, 'ENTER  spend point   ·   R  respec (costs ' + g.respecCost() + ' gold)   ·   ESC  back',
+      // Mobile-safe BACK action for the custom stat list.
+      var upBackY = top + STAT_INFO.length * rowH + 2;
+      g.menu.rects.push({ x: mx, y: upBackY, w: mw, h: Math.max(28, rowH - 6) });
+      txt(ctx, 'BACK', mx + 18, upBackY + Math.max(18, rowH * 0.5 + 4), {
+        size: 15.5, col: C.dim, weight: '700'
+      });
+
+      txt(ctx, G.Input.hasTouch() ? 'TAP A STAT TO UPGRADE' : 'ENTER  spend point   ·   R  respec (costs ' + g.respecCost() + ' gold)   ·   ESC  back',
         vw * 0.5, vh - 34, { size: 12, align: 'center', col: C.dim });
       var rel = [];
       if (s.abilities.airControl) rel.push('Feathered Sigil');
@@ -7151,7 +7212,7 @@ G.UI = (function () {
       var mw=Math.min(540,vw*0.82);
       g.menu.draw(ctx,(vw-mw)*0.5,112,mw,5,{rowH:42,size:17});
       txt(ctx,'CONTROL LAYOUT: drag items, then adjust W/H. Changes save automatically.',vw*0.5,vh-48,{size:11,align:'center',col:C.faint});
-      txt(ctx,'ESC / back to return',vw*0.5,vh-28,{size:11,align:'center',col:C.faint});
+      txt(ctx, G.Input.hasTouch() ? 'TAP BACK TO RETURN' : 'ESC / back to return',vw*0.5,vh-28,{size:11,align:'center',col:C.faint});
     },
 
     pause: function (ctx, g) {
@@ -7349,6 +7410,7 @@ G.Game = (function () {
     this.checkpoint = null;
     this.arenaTriggered = false;
     this.exitOpen = false;
+    this.exitInputPressed = false;
 
     this.acc = 0;
     this.last = 0;
@@ -7433,6 +7495,15 @@ G.Game = (function () {
           delete active[t.identifier];
         }
       }
+      // When the final finger leaves, forcibly clear every virtual control.
+      // This prevents a canceled/dragged touch from leaving PAUSE latched,
+      // which previously made an empty tap near the bottom appear to pause.
+      if (ev.touches && ev.touches.length === 0) {
+        for (var k in G.UI.touchState) G.UI.touchState[k] = false;
+        var acts = ['left','right','jump','attack','dash','block','potion','pause'];
+        for (var ai = 0; ai < acts.length; ai++) G.Input.setTouch(acts[ai], false);
+        active = {};
+      }
       ev.preventDefault();
     }
     function touchMove(ev) {
@@ -7500,10 +7571,9 @@ G.Game = (function () {
     var hasSave = this.save.unlockedLevel > 0 || this.save.level > 1 || this.save.completed.some(Boolean);
     this.menu.set([
       { label: hasSave ? 'CONTINUE' : 'BEGIN', act: 'continue' },
-      { label: 'THE ROAD', act: 'select', right: (this.save.unlockedLevel + 1) + '/' + G.LEVELS.length },
+      { label: 'THE ROAD', act: 'select', right: 'LEVEL ' + (Math.min(this.save.unlockedLevel, G.LEVELS.length - 1) + 1) + '/' + G.LEVELS.length },
       { label: 'ATTUNEMENT', act: 'upgrade', right: this.availablePoints() > 0 ? '+' + this.availablePoints() : '' },
-      { label: this.save.settings.muted ? 'SOUND: OFF' : 'SOUND: ON', act: 'sound' },
-      { label: 'VIEW ZOOM: ' + Math.round(this.getViewZoom() * 100) + '%', act: 'viewZoom' },
+      { label: 'SETTINGS / CONTROLS', act: 'settings' },
       { label: 'ERASE PROGRESS', act: 'wipe' }
     ]);
     G.Audio.music('calm');
@@ -7517,7 +7587,7 @@ G.Game = (function () {
     this.state = STATE.SETTINGS;
     this.menu.set([
       { label: 'CONTROL LAYOUT', act: 'layout' },
-      { label: 'VIEW ZOOM: ' + Math.round(this.getViewZoom() * 100) + '%', act: 'viewZoom' },
+      { label: 'ZOOM: ' + Math.round(this.getViewZoom() * 100) + '%', act: 'viewZoom' },
       { label: this.save.settings.muted ? 'SOUND: OFF' : 'SOUND: ON', act: 'sound' },
       { label: 'RESET CONTROL LAYOUT', act: 'resetLayout' },
       { label: 'BACK', act: 'settingsBack' }
@@ -7579,6 +7649,7 @@ G.Game = (function () {
     for (var i = 0; i < G.LEVELS.length; i++) {
       items.push({ label: G.LEVELS[i].name, disabled: i > this.save.unlockedLevel, act: 'level', i: i });
     }
+    items.push({ label: 'BACK', act: 'title' });
     this.menu.set(items);
     this.menu.index = M.clamp(this.save.unlockedLevel, 0, G.LEVELS.length - 1);
     G.Audio.music('calm');
@@ -7588,6 +7659,7 @@ G.Game = (function () {
     this.state = STATE.UPGRADE;
     var items = [];
     for (var i = 0; i < G.UI.STAT_INFO.length; i++) items.push({ label: G.UI.STAT_INFO[i].label, act: 'stat', i: i });
+    items.push({ label: 'BACK', act: 'back' });
     this.menu.set(items);
   };
 
@@ -7614,6 +7686,8 @@ G.Game = (function () {
 
   Game.prototype.startLevel = function (index, keepRunStats) {
     this.levelIndex = M.clamp(index, 0, G.LEVELS.length - 1);
+    this.save.lastStage = this.levelIndex;
+    G.Save.save(this.save);
     var d = G.Levels.get(this.levelIndex);
     this.level = d;
 
@@ -7704,7 +7778,10 @@ G.Game = (function () {
     if (z !== 0.85 && z !== 1 && z !== 1.15) z = 1;
     this.save.settings.viewZoom = z;
     G.Save.save(this.save);
-    if (this.state === STATE.PLAY && this.camera) {
+    if (this.camera) {
+      // Apply the value immediately so changes made from the in-game Settings
+      // screen are already active when the player returns to gameplay.
+      this.camera.zoom = z;
       this.camera.zoomTarget = z;
     }
   };
@@ -7958,11 +8035,15 @@ G.Game = (function () {
         break;
       case 'select': this.toSelect(); break;
       case 'title': this.toTitle(); break;
+      case 'back': this.back(); break;
       case 'settings': this.toSettings(); break;
       case 'layout': this.toLayout(); break;
       case 'settingsBack':
-        if (this.settingsReturnState === STATE.PAUSE) { this.state = STATE.PLAY; this.togglePause(); }
-        else this.toTitle();
+        if (this.settingsReturnState === STATE.PAUSE) {
+          this.state = STATE.PLAY;
+          this.settingsReturnState = null;
+          G.Audio.music(this.level && this.level.boss ? 'tense' : 'calm');
+        } else this.toTitle();
         break;
       case 'resetLayout': this.resetControlLayout(); break;
       case 'viewZoom': {
@@ -8010,7 +8091,11 @@ G.Game = (function () {
     switch (this.state) {
       case STATE.SELECT: this.toTitle(); break;
       case STATE.SETTINGS:
-        if (this.settingsReturnState === STATE.PAUSE) { this.state = STATE.PLAY; this.togglePause(); } else this.toTitle();
+        if (this.settingsReturnState === STATE.PAUSE) {
+          this.state = STATE.PLAY;
+          this.settingsReturnState = null;
+          G.Audio.music(this.level && this.level.boss ? 'tense' : 'calm');
+        } else this.toTitle();
         break;
       case STATE.LAYOUT: this.saveLayout(); this.toSettings(); break;
       case STATE.UPGRADE:
@@ -8081,6 +8166,9 @@ G.Game = (function () {
 
     var I = G.Input;
     if (I.pressed('pause')) { this.togglePause(); return; }
+    // Capture a jump/up press before Player.update() consumes it. On Android
+    // the jump button is the natural replacement for W/Up at an exit.
+    this.exitInputPressed = I.pressed('up') || I.pressed('jump');
 
     this.runTime += dt;
 
@@ -8217,7 +8305,7 @@ G.Game = (function () {
     if (nearExit) {
       if (this.exitOpen) {
         this.prompt = 'W  /  ↑   enter the gate';
-        if (G.Input.down('up') || G.Input.pressed('jump')) {
+        if (G.Input.down('up') || this.exitInputPressed) {
           G.Audio.play('door');
           this.completeLevel();
         }

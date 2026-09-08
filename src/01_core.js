@@ -138,6 +138,7 @@ G.Input = (function () {
   var touch = {};        // virtual button state set by on-screen controls
   var pad = null, padPrev = {};
   var hasTouch = false;
+  var lastWasKey = false;
 
   function codeToActions(code) {
     var out = [];
@@ -151,6 +152,7 @@ G.Input = (function () {
     if (acts.length) e.preventDefault();
     if (e.repeat) return;
     anyKey = true;
+    if (acts.length) lastWasKey = true;
     for (var i = 0; i < acts.length; i++) {
       if (!down[acts[i]]) pressed[acts[i]] = true;
       down[acts[i]] = true;
@@ -197,12 +199,14 @@ G.Input = (function () {
       hasTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
     },
     hasTouch: function () { return hasTouch; },
+    touchActive: function () { return hasTouch && !lastWasKey; },
     // called by the touch overlay
     setTouch: function (action, isDown) {
       if (isDown && !touch[action] && !down[action]) pressed[action] = true;
       if (!isDown && touch[action]) released[action] = true;
       touch[action] = isDown;
       hasTouch = true;
+      if (isDown) lastWasKey = false;
     },
     poll: function () { pollPad(); },
     down: function (a) { return !!(down[a] || touch[a]); },
@@ -457,6 +461,7 @@ G.Save = (function () {
   function blank() {
     return {
       unlockedLevel: 0,       // 0-based index of the furthest level you may enter
+      lastStage: 0,           // 0-based index of the most recently entered stage
       completed: [],          // completed[levelIndex] = true
       xp: 0, level: 1, gold: 0,
       stats: { vitality: 0, power: 0, speed: 0, stamina: 0, fortune: 0, focus: 0 },
@@ -486,6 +491,7 @@ G.Save = (function () {
     }
 
     b.unlockedLevel = Math.floor(num(d.unlockedLevel, 0, 0, 999));
+    b.lastStage     = Math.floor(num(d.lastStage, Math.min(b.unlockedLevel, 999), 0, 999));
     b.xp            = Math.floor(num(d.xp, 0, 0));
     b.level         = Math.floor(num(d.level, 1, 1, 999));
     b.gold          = Math.floor(num(d.gold, 0, 0));

@@ -14,7 +14,6 @@ const SRC = path.join(ROOT, 'src');
 const DIST = path.join(ROOT, 'dist');
 
 const VERSION = '1.0.3';
-const CACHE_NAME = `grimhollow-v${VERSION}`;
 
 function log(s) { process.stdout.write(s + '\n'); }
 
@@ -62,6 +61,7 @@ const html = `<!DOCTYPE html>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Grimhollow</title>
 <link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a0810'/%3E%3Cpath d='M6 20 L10 9 L13 15 L16 7 L19 15 L22 9 L26 20 Z' fill='%23e0b64a'/%3E%3C/svg%3E">
 <style>
   :root { color-scheme: dark; }
@@ -180,30 +180,46 @@ const manifest = {
   description: 'A dark action-platformer with ten levels and three bosses.',
   start_url: './', scope: './', display: 'standalone',
   background_color: '#06050a', theme_color: '#0a0810', orientation: 'landscape',
-  icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }]
+  icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }]
 };
+
+fs.writeFileSync(path.join(DIST, 'icon.svg'), iconSvg, 'utf8');
+const iconSet = require('./icons').writeIcons(DIST);
+manifest.icons = [
+  { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+  { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+  { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+  { src: 'icon-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+  { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+];
+fs.writeFileSync(path.join(DIST, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+const CACHE_NAME = `grimhollow-v${VERSION}-${html.length}`;
+const ASSETS = ['./', './index.html', './manifest.json', './icon.svg'].concat(iconSet.map(i => './' + i.name));
 const serviceWorker = `const CACHE = '${CACHE_NAME}';
-const ASSETS = ['./', './index.html', './manifest.json', './icon.svg'];
+const ASSETS = ${JSON.stringify(ASSETS)};
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
-  event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).then(response => {
-    const copy = response.clone();
-    if (new URL(event.request.url).origin === self.location.origin) caches.open(CACHE).then(cache => cache.put(event.request, copy));
-    return response;
-  }).catch(() => caches.match('./index.html'))));
+  event.respondWith(caches.match(event.request).then(cached => {
+    if (cached) return cached;
+    return fetch(event.request).then(response => {
+      if (response && response.status === 200 && response.type === 'basic') {
+        const copy = response.clone();
+        caches.open(CACHE).then(cache => cache.put(event.request, copy));
+      }
+      return response;
+    }).catch(() => event.request.mode === 'navigate' ? caches.match('./index.html') : new Response('', {status: 504, statusText: 'offline'}));
+  }));
 });
 `;
-fs.writeFileSync(path.join(DIST, 'icon.svg'), iconSvg, 'utf8');
-fs.writeFileSync(path.join(DIST, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 fs.writeFileSync(path.join(DIST, 'sw.js'), serviceWorker, 'utf8');
 
 log('');
 log(`  modules  ${files.length}`);
 log(`  src      ${(totalRaw / 1024).toFixed(1)} KB`);
 log(`  dist     ${(html.length / 1024).toFixed(1)} KB  ->  dist/index.html`);
-log('  pwa      manifest.json, sw.js, icon.svg');
+log('  pwa      manifest.json, sw.js, icon.svg + PNG icon set');
 
 /* Sanity: the bundle must not contain a bare ES module keyword, and must not
    have unbalanced script tags that would truncate the HTML. */

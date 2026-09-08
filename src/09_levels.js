@@ -717,17 +717,17 @@ G.Levels = {
   validate: function () {
     var problems = [];
     for (var i = 0; i < G.LEVELS.length; i++) {
-      var d = G.LEVELS[i];
-      var w;
+      var d = G.LEVELS[i], w;
       try { w = this.world(i); }
       catch (e) { problems.push('L' + d.id + ' build threw: ' + e.message); continue; }
       var K = G.K, T = G.T;
-
       function solidAt(tx, ty) { return w.at(tx, ty) === T.SOLID; }
-      function freeBody(tx, ty) {
-        // 1x2 tile clearance for a standing actor whose feet are at row ty
-        return !solidAt(tx, ty - 1) && !solidAt(tx, ty - 2);
+      function embeddedBody(tx, ty, hPx) {
+        var r0 = Math.floor((ty * K.TILE - hPx + 3) / K.TILE);
+        for (var r = r0; r <= ty - 1; r++) if (solidAt(tx, r)) return true;
+        return false;
       }
+      function freeBody(tx, ty, hPx) { return !embeddedBody(tx, ty, hPx || 42); }
       function grounded(tx, ty) { return solidAt(tx, ty) || w.at(tx, ty) === T.PLAT; }
 
       if (!d.spawn) problems.push('L' + d.id + ' has no spawn');
@@ -738,28 +738,40 @@ G.Levels = {
       if (!d.exit) problems.push('L' + d.id + ' has no exit');
       else if (!freeBody(d.exit[0], d.exit[1])) problems.push('L' + d.id + ' exit is inside geometry at ' + d.exit);
 
-      var lists = [['enemies', d.enemies], ['pickups', d.pickups]];
-      for (var li = 0; li < lists.length; li++) {
-        var arr = lists[li][1] || [];
-        for (var j = 0; j < arr.length; j++) {
-          var e = arr[j];
-          if (e.x < 1 || e.x >= d.w - 1 || e.y < 1 || e.y >= d.h) {
-            problems.push('L' + d.id + ' ' + lists[li][0] + '[' + j + '] out of bounds (' + e.x + ',' + e.y + ')');
-          } else if (!freeBody(e.x, e.y)) {
-            problems.push('L' + d.id + ' ' + lists[li][0] + '[' + j + '] embedded in rock (' + e.x + ',' + e.y + ')');
-          }
+      var arr = d.enemies || [];
+      for (var j = 0; j < arr.length; j++) {
+        var e = arr[j];
+        var et = (G.Enemy && G.Enemy.TYPES && G.Enemy.TYPES[e.t]) || null;
+        if (!et) { problems.push('L' + d.id + ' enemies[' + j + '] unknown type "' + e.t + '"'); continue; }
+        if (e.x < 1 || e.x >= d.w - 1 || e.y < 1 || e.y >= d.h) {
+          problems.push('L' + d.id + ' enemies[' + j + '] out of bounds (' + e.x + ',' + e.y + ')');
+        } else if (embeddedBody(e.x, e.y, et.h)) {
+          problems.push('L' + d.id + ' enemies[' + j + '] embedded in rock (' + e.x + ',' + e.y + ')');
+        } else if (!et.flying && !grounded(e.x, e.y)) {
+          var floor = -1;
+          for (var fy = e.y; fy < d.h; fy++) if (grounded(e.x, fy)) { floor = fy; break; }
+          if (floor < 0) problems.push('L' + d.id + ' enemies[' + j + '] would fall out of the world (' + e.x + ',' + e.y + ')');
         }
       }
-      if (d.checkpoints) {
-        for (var c = 0; c < d.checkpoints.length; c++) {
-          var cp = d.checkpoints[c];
-          if (!freeBody(cp[0], cp[1])) problems.push('L' + d.id + ' checkpoint[' + c + '] embedded (' + cp + ')');
+      var pk = d.pickups || [];
+      for (var p2 = 0; p2 < pk.length; p2++) {
+        var pu = pk[p2];
+        if (pu.x < 1 || pu.x >= d.w - 1 || pu.y < 1 || pu.y >= d.h) {
+          problems.push('L' + d.id + ' pickups[' + p2 + '] out of bounds (' + pu.x + ',' + pu.y + ')');
+        } else if (embeddedBody(pu.x, pu.y, 20)) {
+          problems.push('L' + d.id + ' pickups[' + p2 + '] embedded in rock (' + pu.x + ',' + pu.y + ')');
         }
+      }
+      if (d.checkpoints) for (var c = 0; c < d.checkpoints.length; c++) {
+        var cp = d.checkpoints[c];
+        if (!freeBody(cp[0], cp[1])) problems.push('L' + d.id + ' checkpoint[' + c + '] embedded (' + cp + ')');
+        else if (!grounded(cp[0], cp[1])) problems.push('L' + d.id + ' checkpoint[' + c + '] has no floor (' + cp + ')');
       }
       if (d.relic && !freeBody(d.relic.x, d.relic.y)) problems.push('L' + d.id + ' relic embedded');
       if (d.boss) {
         if (!d.arena) problems.push('L' + d.id + ' has a boss but no arena');
-        if (!freeBody(d.boss.x, d.boss.y)) problems.push('L' + d.id + ' boss spawn embedded');
+        if (embeddedBody(d.boss.x, d.boss.y, 72)) problems.push('L' + d.id + ' boss spawn embedded');
+        if (!grounded(d.boss.x, d.boss.y)) problems.push('L' + d.id + ' boss spawn has no floor');
       }
     }
     return problems;

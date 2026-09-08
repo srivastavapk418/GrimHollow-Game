@@ -303,6 +303,13 @@ G.Enemy = (function () {
         var guardDamage = amount * 0.35;
         if (guardDamage < this.poise) {
           this.poise -= guardDamage;
+          // Armor blocks the hit's full force, but never makes an enemy
+          // literally unkillable. A small chip-through portion lets sustained
+          // attacks eventually finish shielded enemies even without a poise break.
+          var chip = amount * (opts.heavy ? 0.22 : 0.12);
+          this.hp -= chip;
+          this.hurtFlash = 1;
+          if (this.hp <= 0) { this.die(dirX); return 'hit'; }
           return 'blocked';
         }
         amount = Math.max(0, amount - this.poise / 0.35);

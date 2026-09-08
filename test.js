@@ -15,7 +15,16 @@ const path = require('path');
 let FAIL = 0, PASS = 0;
 const notes = [];
 function ok(name)        { PASS++; console.log('  ✓ ' + name); }
-function bad(name, err)  { FAIL++; console.log('  ✗ ' + name + (err ? '\n      ' + String(err).split('\n').slice(0, 6).join('\n      ') : '')); }
+function bad(name, err)  {
+  FAIL++;
+  var out = '  ✗ ' + name;
+  if (err) {
+    var lines = String(err).split('\n'), limit = 40;
+    out += '\n      ' + lines.slice(0, limit).join('\n      ');
+    if (lines.length > limit) out += '\n      ... and ' + (lines.length - limit) + ' more line(s), suppressed';
+  }
+  console.log(out);
+}
 function note(s)         { notes.push(s); }
 function check(name, fn) { try { const r = fn(); if (r === false) bad(name, 'returned false'); else ok(name); } catch (e) { bad(name, e && e.stack || e); } }
 
@@ -288,6 +297,14 @@ check('G.boot() constructs a Game', () => {
   return true;
 });
 
+/* One gameplay step, faithful to Game.prototype.frame(). Keeping hit-stop
+   advancement here prevents direct-update tests from getting stuck at 4% speed. */
+function step(g, dt) {
+  dt = dt || 1 / 120;
+  g.update(dt);
+  G.Input.endFrame();
+}
+
 /* A deterministic pseudo-player: presses plausible combinations so we walk
    every state machine branch (attack chains, dash, parry, block, potion). */
 function simulate(g, frames, seed, opts) {
@@ -307,7 +324,7 @@ function simulate(g, frames, seed, opts) {
         G.Input.setTouch(a, true); held[a] = true;
       }
     }
-    g.update(1 / 120);
+    step(g);
     G.Input.endFrame();
     if (opts.draw && f % 7 === 0) g.draw();
     if (opts.godmode && g.player) { g.player.hp = g.player.maxHp; g.player.dead = false; g.player.deadT = 0; }
@@ -352,7 +369,7 @@ check('boss fights run to completion', () => {
     for (const n of names) {
       boss.startAction(n);
       for (let f = 0; f < 200; f++) {
-        game.update(1 / 120);
+        step(game);
         game.player.hp = game.player.maxHp;
         game.player.dead = false;
       }
@@ -382,13 +399,13 @@ check('every enemy archetype spawns, fights and dies', () => {
   for (const t of types) {
     const e = game.spawnEnemy(t, game.player.body.cx() + 70, (G.LEVELS[0].gy) * G.K.TILE, { tier: 3, elite: true, spawn: true });
     for (let f = 0; f < 400; f++) {
-      game.update(1 / 120);
+      step(game);
       game.player.hp = game.player.maxHp;
       game.player.dead = false;
     }
     game.draw();
     e.takeDamage(99999, 1, {});
-    for (let f = 0; f < 120; f++) game.update(1 / 120);
+    for (let f = 0; f < 120; f++) step(game);
     if (!e.dead) throw new Error(t + ' survived 99999 damage');
   }
   note(`enemy archetypes exercised: ${types.join(', ')}`);
@@ -400,7 +417,7 @@ check('player death and checkpoint respawn', () => {
   game.player.hp = 1;
   game.player.takeDamage(999, 1, { unblockable: true });
   if (!game.player.dead) throw new Error('player survived a 999 unblockable hit at 1 hp');
-  for (let f = 0; f < 400; f++) game.update(1 / 120);
+  for (let f = 0; f < 400; f++) step(game);
   game.toDeath();
   if (game.state !== G.Game.STATE.DEAD) throw new Error('did not reach DEAD state');
   game.draw();
@@ -414,7 +431,7 @@ check('player death and checkpoint respawn', () => {
 check('falling out of the world kills rather than hangs', () => {
   game.startLevel(0, false);
   game.player.body.y = game.world.pixelH() + 500;
-  game.update(1 / 120);
+  step(game);
   if (!game.player.dead) throw new Error('void fall did not kill');
   return true;
 });
@@ -423,18 +440,18 @@ check('baseline touch double-jump is usable in every level', () => {
   game.save.abilities = { doubleJump: true, airControl: false, dashAttack: false, plunge: false };
   game.startLevel(1, false);
   const p = game.player;
-  for (let f = 0; f < 10; f++) game.update(1 / 120);
+  for (let f = 0; f < 10; f++) step(game);
   if (p.maxJumps() !== 2) throw new Error('Level 2 does not retain the baseline double-jump');
 
   // Two separate taps on the on-screen JUMP control must produce a ground
   // jump followed by an airborne jump.
   G.Input.setTouch('jump', true);
-  game.update(1 / 120);
+  step(game);
   G.Input.setTouch('jump', false);
   G.Input.endFrame();
-  for (let f = 0; f < 8; f++) game.update(1 / 120);
+  for (let f = 0; f < 8; f++) step(game);
   G.Input.setTouch('jump', true);
-  game.update(1 / 120);
+  step(game);
   G.Input.setTouch('jump', false);
   G.Input.endFrame();
   if (p.body.vy > G.K.DOUBLE_JUMP_VEL + 20 || p.jumpsLeft !== 0) {
@@ -586,6 +603,32 @@ check('level completion grants XP and can advance player level', () => {
   return true;
 });
 
+check('last-stage indicator tracks the most recently entered stage', () => {
+  game.save.unlockedLevel = 3;
+  game.save.lastStage = 2;
+  game.startLevel(3, false);
+  if (game.save.lastStage !== 3) throw new Error('lastStage did not track level 4 entry: ' + game.save.lastStage);
+  game.startLevel(1, false);
+  if (game.save.lastStage !== 1) throw new Error('lastStage did not update on revisit: ' + game.save.lastStage);
+  game.toTitle();
+  const road = game.menu.items.find(it => it.act === 'select');
+  if (!road || road.right !== 'LEVEL 4/10') throw new Error('home progression indicator incorrect: ' + (road && road.right));
+  return true;
+});
+
+check('android-style jump input can complete an open exit before Player consumes jump', () => {
+  game.startLevel(0, false);
+  const ex = (game.level.exit[0] + 0.5) * G.K.TILE;
+  const ey = game.level.exit[1] * G.K.TILE;
+  game.player.body.x = ex - game.player.body.w * 0.5;
+  game.player.body.y = ey - game.player.body.h;
+  game.exitOpen = true;
+  game.exitInputPressed = true;
+  game.updateTriggers(0);
+  if (game.state !== G.Game.STATE.CLEAR) throw new Error('exit jump did not complete level; state=' + game.state);
+  return true;
+});
+
 check('level completion unlocks the next level', () => {
   const s = G.Save.load();
   s.unlockedLevel = 0; s.completed = [];
@@ -612,6 +655,39 @@ check('finishing the last level reaches VICTORY', () => {
 /* ============================================================ [8] menus = */
 console.log('\n[8] menus & every screen renders');
 
+check('armored shielders take chip damage and can eventually die', () => {
+  game.startLevel(0, false);
+  const e = new G.Enemy(game, 'shielder', 300, 100, { face: 1 });
+  e.blockRaised = true;
+  e.poise = e.poiseMax;
+  for (let i = 0; i < 100; i++) {
+    if (e.dead) break;
+    e.takeDamage(12, -1, { kb: 0 });
+  }
+  if (!e.dead) throw new Error('shielded enemy remained alive after sustained frontal attacks');
+  return true;
+});
+
+check('mobile menu screens expose functional BACK touch targets', () => {
+  game.toSelect();
+  G.UI.levelSelect(game.ctx, game);
+  const r1 = game.menu.rects[game.menu.rects.length - 1];
+  if (!r1) throw new Error('level select BACK rect missing');
+  if (game.menu.pointer(r1.x + r1.w * 0.5, r1.y + r1.h * 0.5) < 0 || game.menu.current().label !== 'BACK') throw new Error('level select BACK not hit-testable');
+  game.toUpgrade();
+  G.UI.upgrades(game.ctx, game);
+  const r2 = game.menu.rects[game.menu.rects.length - 1];
+  if (!r2) throw new Error('upgrade BACK rect missing');
+  if (game.menu.pointer(r2.x + r2.w * 0.5, r2.y + r2.h * 0.5) < 0 || game.menu.current().label !== 'BACK') throw new Error('upgrade BACK not hit-testable');
+  return true;
+});
+
+check('empty lower-screen touches do not hit the pause control', () => {
+  const act = G.UI.touchHit(960, 540, 480, 520, game.save.settings);
+  if (act === 'pause') throw new Error('blank bottom touch mapped to pause');
+  return true;
+});
+
 check('all screens draw without throwing', () => {
   const screens = ['title', 'levelSelect', 'upgrades', 'pause', 'death', 'levelClear', 'victory', 'relicPopup'];
   game.startLevel(0, false);
@@ -635,9 +711,10 @@ check('menu navigation wraps and never lands on a disabled item via confirm', ()
   // only level 0..unlockedLevel should be selectable
   game.save.unlockedLevel = 2;
   game.toSelect();
-  let enabled = 0;
-  for (const it of game.menu.items) if (!it.disabled) enabled++;
-  if (enabled !== 3) throw new Error('expected 3 unlocked levels selectable, got ' + enabled);
+  let enabledLevels = 0;
+  for (const it of game.menu.items) if (it.act === 'level' && !it.disabled) enabledLevels++;
+  if (enabledLevels !== 3) throw new Error('expected 3 unlocked levels selectable, got ' + enabledLevels);
+  if (!game.menu.items.some(it => it.act === 'title' && it.label === 'BACK')) throw new Error('level select missing BACK');
   return true;
 });
 
@@ -660,10 +737,39 @@ check('every menu action is handled (no silent no-ops)', () => {
   for (const mk of screens) { mk(); for (const it of game.menu.items) acts.add(it.act); }
   const handled = new Set(['continue', 'select', 'title', 'upgrade', 'sound', 'wipe',
                            'level', 'stat', 'resume', 'restart', 'respawn', 'quit', 'next',
-                           'settings', 'layout', 'settingsBack', 'resetLayout', 'viewZoom']);
+                           'settings', 'layout', 'settingsBack', 'resetLayout', 'viewZoom', 'back']);
   const unknown = [...acts].filter(a => !handled.has(a));
   if (unknown.length) throw new Error('unhandled menu actions: ' + unknown.join(', '));
   note(`menu actions in use: ${[...acts].sort().join(', ')}`);
+  return true;
+});
+
+check('menu rows stay on screen and never overlap (all sizes)', () => {
+  const sizes = [[1280, 720], [1920, 1080], [1024, 576], [800, 480], [640, 960], [414, 896]];
+  const screens = [
+    ['title', () => game.toTitle()],
+    ['select', () => game.toSelect()],
+    ['upgrade', () => game.toUpgrade()],
+    ['death', () => game.toDeath()]
+  ];
+  const problems = [];
+  for (const [w, h] of sizes) {
+    windowStub.innerWidth = w; windowStub.innerHeight = h;
+    game.resize();
+    for (const [nm, mk] of screens) {
+      mk(); game.draw();
+      const rects = game.menu.rects;
+      if (!rects.length) { problems.push(`${nm} @${w}x${h}: no rows reported`); continue; }
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        if (r.y < 0 || r.y + r.h > game.vh + 0.5) problems.push(`${nm} @${w}x${h}: row ${i} off bottom/top`);
+        if (r.x < -0.5 || r.x + r.w > game.vw + 0.5) problems.push(`${nm} @${w}x${h}: row ${i} off side`);
+        if (i > 0 && r.y < rects[i - 1].y + rects[i - 1].h - 0.5) problems.push(`${nm} @${w}x${h}: rows ${i - 1}/${i} overlap`);
+      }
+    }
+  }
+  windowStub.innerWidth = 1200; windowStub.innerHeight = 675; game.resize();
+  if (problems.length) throw new Error(problems.slice(0, 12).join('\n'));
   return true;
 });
 
@@ -671,19 +777,50 @@ check('view zoom changes gameplay camera without resizing menus', () => {
   const beforeW = game.vw, beforeH = game.vh;
   game.save.settings.viewZoom = 0.85;
   game.startLevel(0, false);
-  if (Math.abs(game.camera.zoom - 0.85) > 0.001) throw new Error('85% view zoom not applied');
+  if (Math.abs(game.camera.zoom - 0.85) > 0.001) throw new Error('85% zoom not applied on level load');
   game.save.settings.viewZoom = 1.15;
   game.startLevel(0, false);
-  if (Math.abs(game.camera.zoom - 1.15) > 0.001) throw new Error('115% view zoom not applied');
+  if (Math.abs(game.camera.zoom - 1.15) > 0.001) throw new Error('115% zoom not applied on level load');
   game.toTitle(); game.draw();
-  if (game.vw !== beforeW || game.vh !== beforeH) throw new Error('view zoom changed menu viewport');
+  if (game.vw !== beforeW || game.vh !== beforeH) throw new Error('zoom changed menu viewport');
+
+  // The important regression: changing Zoom from the in-game Settings screen
+  // must affect the gameplay camera even though the game is temporarily in a menu state.
   game.save.settings.viewZoom = 1;
-  game.resize();
+  game.startLevel(0, false);
+  game.togglePause();
   game.toSettings();
   game.menu.index = game.menu.items.findIndex(it => it.act === 'viewZoom');
+  game.confirm(); // cycles 100% -> 115% and redraws Settings
+  if (Math.abs(game.save.settings.viewZoom - 1.15) > 0.001) throw new Error('settings Zoom did not save 115%');
+  if (Math.abs(game.camera.zoomTarget - 1.15) > 0.001) throw new Error('settings Zoom did not update camera target');
+  game.menu.index = game.menu.items.findIndex(it => it.act === 'settingsBack');
   game.confirm();
-  if (Math.abs(game.save.settings.viewZoom - 1.15) > 0.001) throw new Error('settings view zoom action did not change viewZoom');
+  if (game.state !== G.Game.STATE.PLAY) throw new Error('settings BACK did not return to gameplay');
+  if (Math.abs(game.camera.zoom - 1.15) > 0.001) throw new Error('settings Zoom not visible after returning to gameplay');
+
   if ('quality' in game.save.settings) throw new Error('quality setting still present');
+  return true;
+});
+
+check('home progression uses furthest unlocked stage, while gameplay stage uses current level', () => {
+  game.save.unlockedLevel = 3;
+  game.startLevel(0, false);
+  game.toTitle();
+  const road = game.menu.items.find(it => it.act === 'select');
+  if (!road || road.right !== 'LEVEL 4/10') throw new Error('home Road should show furthest unlocked level 4, got ' + (road && road.right));
+  game.startLevel(0, false);
+  const texts = [];
+  const ctx = game.ctx;
+  const oldFill = ctx.fillText;
+  ctx.fillText = function (text) { texts.push(String(text)); };
+  try { G.UI.drawHUD(ctx, game); } finally { ctx.fillText = oldFill; }
+  if (!texts.some(t => t === 'LEVEL 1')) throw new Error('game HUD did not show current stage LEVEL 1: ' + texts.join(' | '));
+  game.startLevel(3, false);
+  const texts4 = [];
+  ctx.fillText = function (text) { texts4.push(String(text)); };
+  try { G.UI.drawHUD(ctx, game); } finally { ctx.fillText = oldFill; }
+  if (!texts4.some(t => t === 'LEVEL 4')) throw new Error('game HUD did not show current stage LEVEL 4: ' + texts4.join(' | '));
   return true;
 });
 
@@ -785,4 +922,21 @@ if (notes.length) {
   for (const n of notes) console.log('  . ' + n);
 }
 console.log(`\n${PASS} passed, ${FAIL} failed   (${canvasesMade} canvases allocated)\n`);
+check('touch pad auto mode follows latest input type', () => {
+  G.Input.init();
+  G.Input.setTouch('left', true);
+  if (!G.Input.touchActive()) throw new Error('touch input did not activate overlay');
+  const kd = (listeners.keydown || [])[0];
+  if (typeof kd !== 'function') throw new Error('keydown listener not registered');
+  kd({ code: 'KeyA', repeat: false, preventDefault() {} });
+  if (G.Input.touchActive()) throw new Error('keyboard input did not hide overlay');
+  G.Input.setTouch('left', false);
+  G.Input.setTouch('right', true);
+  if (!G.Input.touchActive()) throw new Error('touch input did not restore overlay');
+  G.Input.setTouch('right', false);
+  G.Input.endFrame();
+  return true;
+});
+
 process.exit(FAIL ? 1 : 0);
+

@@ -285,13 +285,27 @@ G.UI = (function () {
       ctx.beginPath();
       ctx.ellipse(b.x + b.w * 0.5, b.y + b.h * 0.5, b.w * 0.5, b.h * 0.5, 0, 0, 6.2832);
       ctx.fill();
-      ctx.globalAlpha = on ? 0.98 : 0.55;
-      ctx.strokeStyle = '#0b0a10'; ctx.lineWidth = Math.max(1.5, Math.min(b.w, b.h) * 0.025); ctx.stroke();
-      ctx.globalAlpha = on ? 1 : 0.78;
-      txt(ctx, b.icon, b.x + b.w * 0.5, b.y + b.h * 0.5 + (b.icon.length > 1 ? Math.min(6, b.h * 0.12) : Math.min(7, b.h * 0.14)), {
-        size: b.icon.length > 1 ? Math.min(b.w, b.h) * 0.25 : Math.min(b.w, b.h) * 0.38,
-        align: 'center', col: '#0b0a10', weight: '800', stroke: false
-      });
+      ctx.globalAlpha = on ? 0.98 : 0.78;
+      /* Draw geometric directional/pause glyphs as paths. Unicode arrows and
+         the pause symbol can become tofu boxes on Android fonts. Keep all
+         existing Live control positions/sizing; this changes glyph rendering only. */
+      if (b.act === 'left' || b.act === 'right' || b.act === 'up' || b.act === 'down' || b.act === 'pause') {
+        var cx = b.x + b.w * 0.5, cy = b.y + b.h * 0.5;
+        var t = Math.min(b.w, b.h) * 0.22;
+        ctx.fillStyle = '#0b0a10';
+        ctx.beginPath();
+        if (b.act === 'left') { ctx.moveTo(cx + t * 0.7, cy - t); ctx.lineTo(cx + t * 0.7, cy + t); ctx.lineTo(cx - t * 0.8, cy); }
+        else if (b.act === 'right') { ctx.moveTo(cx - t * 0.7, cy - t); ctx.lineTo(cx - t * 0.7, cy + t); ctx.lineTo(cx + t * 0.8, cy); }
+        else if (b.act === 'up') { ctx.moveTo(cx - t, cy + t * 0.7); ctx.lineTo(cx + t, cy + t * 0.7); ctx.lineTo(cx, cy - t * 0.8); }
+        else if (b.act === 'down') { ctx.moveTo(cx - t, cy - t * 0.7); ctx.lineTo(cx + t, cy - t * 0.7); ctx.lineTo(cx, cy + t * 0.8); }
+        else { ctx.rect(cx - t * 0.72, cy - t * 0.85, t * 0.5, t * 1.7); ctx.rect(cx + t * 0.22, cy - t * 0.85, t * 0.5, t * 1.7); }
+        ctx.closePath(); ctx.fill();
+      } else {
+        txt(ctx, b.icon, b.x + b.w * 0.5, b.y + b.h * 0.5 + (b.icon.length > 1 ? Math.min(6, b.h * 0.12) : Math.min(7, b.h * 0.14)), {
+          size: b.icon.length > 1 ? Math.min(b.w, b.h) * 0.25 : Math.min(b.w, b.h) * 0.38,
+          align: 'center', col: '#0b0a10', weight: '800', stroke: false
+        });
+      }
       // subtle highlight gives the controls a glassy, more game-like finish
       ctx.globalAlpha = on ? 0.22 : 0.10;
       ctx.fillStyle = '#fff';
@@ -304,7 +318,7 @@ G.UI = (function () {
     var L = touchLayout(vw, vh, settings);
     for (var k in L) {
       var b = L[k], cx = b.x + b.w * 0.5, cy = b.y + b.h * 0.5;
-      var rx = b.w * 0.62, ry = b.h * 0.62;
+      var rx = b.w * (k === 'pause' ? 0.50 : 0.62), ry = b.h * (k === 'pause' ? 0.50 : 0.62);
       if (((px - cx) / rx) * ((px - cx) / rx) + ((py - cy) / ry) * ((py - cy) / ry) <= 1) return b.act;
     }
     return null;
@@ -320,7 +334,8 @@ G.UI = (function () {
     var hb = lay.hud.health;
     var hx = hb.x * vw, hy = hb.y * vh, bw = hb.w * vw, hh = hb.h * vh;
     var bh = M.clamp(hh * 0.27, 11, 22);
-    panel(ctx, hx - 6, hy - 6, bw + 12, hh + 12, { r: 7 });
+    var hudPanelX = hx - 6, hudPanelY = hy - 6, hudPanelW = bw + 12, hudPanelH = hh + 12;
+    panel(ctx, hudPanelX, hudPanelY, hudPanelW, hudPanelH, { r: 7 });
 
     var hpFrac = p.hp / p.maxHp;
     bar(ctx, hx, hy, bw, bh, hpFrac, C.hp, C.hpBack, { ghost: g.hpGhost, ghostCol: 'rgba(255,180,180,0.30)' });
@@ -342,20 +357,20 @@ G.UI = (function () {
       ctx.save();
       ctx.globalAlpha = have ? 1 : 0.28;
       ctx.fillStyle = have ? '#4ec87a' : '#2a2a30';
-      roundRect(ctx, pad + i * 16, py, 11, 15, 3); ctx.fill();
+      roundRect(ctx, hx + i * 16, py, 11, 15, 3); ctx.fill();
       ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 1.5;
-      roundRect(ctx, pad + i * 16, py, 11, 15, 3); ctx.stroke();
+      roundRect(ctx, hx + i * 16, py, 11, 15, 3); ctx.stroke();
       ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.fillRect(pad + i * 16 + 2, py + 2, 3, 9);
+      ctx.fillRect(hx + i * 16 + 2, py + 2, 3, 9);
       ctx.restore();
     }
-    txt(ctx, 'L', pad + s.maxPotions * 16 + 6, py + 12, { size: 10, col: C.faint });
+    txt(ctx, 'L', hx + s.maxPotions * 16 + 6, py + 12, { size: 10, col: C.faint });
 
     /* --- level / xp --- */
     var xb = lay.hud.xp;
     var xx = xb.x * vw, xy = xb.y * vh, xw = xb.w * vw, xh = xb.h * vh;
     panel(ctx, xx - 8, xy - 6, xw + 16, xh + 12, { r: 7 });
-    txt(ctx, 'LV ' + s.level, xx, xy + Math.max(14, xh * 0.34), { size: Math.max(13, Math.min(19, xh * 0.38)), col: C.gold, weight: '800' });
+    txt(ctx, 'LEVEL ' + (g.levelIndex + 1), xx, xy + Math.max(14, xh * 0.34), { size: Math.max(12, Math.min(18, xh * 0.34)), col: C.gold, weight: '800' });
     var need = g.xpForLevel(s.level);
     var have2 = s.xp;
     txt(ctx, have2 + ' / ' + need, xx + xw, xy + Math.max(14, xh * 0.34), { size: 11, align: 'right', col: C.dim });
@@ -432,7 +447,9 @@ G.UI = (function () {
       });
     }
 
-    if (G.Input.hasTouch() && s.settings.showTouch !== false) drawTouch(ctx, vw, vh, g);
+    var stMode = s.settings.showTouch || 'auto';
+    var wantPad = stMode === 'on' ? true : stMode === 'off' ? false : G.Input.touchActive();
+    if (wantPad) drawTouch(ctx, vw, vh, g);
   }
 
   function drawBossBar(ctx, g, boss) {
@@ -689,10 +706,14 @@ G.UI = (function () {
       if (my + menuH > vh - 20) my = Math.max(86, vh - menuH - 20);
       g.menu.draw(ctx, (vw - mw) * 0.5, my, mw, gap, { rowH: rowH, size: rowH < 31 ? 15 : 18 });
 
-      txt(ctx, 'W/A/S/D or arrows  ·  SPACE jump  ·  J attack  ·  SHIFT dash  ·  K guard  ·  L potion',
-        vw * 0.5, vh - 34, { size: 11.5, align: 'center', col: C.faint });
-      txt(ctx, 'ENTER / click to select   ·   gamepad supported',
-        vw * 0.5, vh - 18, { size: 11, align: 'center', col: 'rgba(95,89,79,0.75)' });
+      if (G.Input.hasTouch()) {
+        txt(ctx, 'TAP A ROW TO SELECT', vw * 0.5, vh - 26, { size: 11.5, align: 'center', col: C.faint });
+      } else {
+        txt(ctx, 'W/A/S/D or arrows  ·  SPACE jump  ·  J attack  ·  SHIFT dash  ·  K guard  ·  L potion',
+          vw * 0.5, vh - 34, { size: 11.5, align: 'center', col: C.faint });
+        txt(ctx, 'ENTER / click to select   ·   gamepad supported',
+          vw * 0.5, vh - 18, { size: 11, align: 'center', col: 'rgba(95,89,79,0.75)' });
+      }
     },
 
     levelSelect: function (ctx, g) {
@@ -769,7 +790,15 @@ G.UI = (function () {
         });
       }
 
-      txt(ctx, 'ENTER  begin   ·   U  upgrades   ·   ESC  back',
+      // Mobile-safe BACK action: the custom node list above does not use
+      // Menu.draw(), so give BACK its own real hit rectangle and visual row.
+      var backY = top + n * rowH + 4;
+      g.menu.rects.push({ x: mx, y: backY, w: mw, h: Math.max(28, rowH - 4) });
+      txt(ctx, 'BACK', mx + 22, backY + Math.max(18, rowH * 0.5 + 5), {
+        size: 15.5, col: C.dim, weight: '700'
+      });
+
+      txt(ctx, G.Input.hasTouch() ? 'TAP A ROW TO SELECT' : 'ENTER  begin   ·   U  upgrades   ·   ESC  back',
         vw * 0.5, vh - 34, { size: 12, align: 'center', col: C.dim });
       if (G.LEVELS[g.menu.index] && G.LEVELS[g.menu.index].hint && g.menu.index <= s.unlockedLevel) {
         txt(ctx, '"' + G.LEVELS[g.menu.index].hint + '"', vw * 0.5, vh - 56,
@@ -826,11 +855,18 @@ G.UI = (function () {
         txt(ctx, '' + val, mx + mw - 16, y + 28, { size: 15, align: 'right', col: st.col, weight: '800' });
 
         if (sel && pts > 0) {
-          txt(ctx, 'ENTER  +1', mx + mw - 16, y + 44, { size: 10, align: 'right', col: C.gold, weight: '700' });
+          txt(ctx, G.Input.hasTouch() ? '+1' : 'ENTER  +1', mx + mw - 16, y + 44, { size: 10, align: 'right', col: C.gold, weight: '700' });
         }
       }
 
-      txt(ctx, 'ENTER  spend point   ·   R  respec (costs ' + g.respecCost() + ' gold)   ·   ESC  back',
+      // Mobile-safe BACK action for the custom stat list.
+      var upBackY = top + STAT_INFO.length * rowH + 2;
+      g.menu.rects.push({ x: mx, y: upBackY, w: mw, h: Math.max(28, rowH - 6) });
+      txt(ctx, 'BACK', mx + 18, upBackY + Math.max(18, rowH * 0.5 + 4), {
+        size: 15.5, col: C.dim, weight: '700'
+      });
+
+      txt(ctx, G.Input.hasTouch() ? 'TAP A STAT TO UPGRADE' : 'ENTER  spend point   ·   R  respec (costs ' + g.respecCost() + ' gold)   ·   ESC  back',
         vw * 0.5, vh - 34, { size: 12, align: 'center', col: C.dim });
       var rel = [];
       if (s.abilities.airControl) rel.push('Feathered Sigil');
@@ -848,7 +884,7 @@ G.UI = (function () {
       var mw=Math.min(540,vw*0.82);
       g.menu.draw(ctx,(vw-mw)*0.5,112,mw,5,{rowH:42,size:17});
       txt(ctx,'CONTROL LAYOUT: drag items, then adjust W/H. Changes save automatically.',vw*0.5,vh-48,{size:11,align:'center',col:C.faint});
-      txt(ctx,'ESC / back to return',vw*0.5,vh-28,{size:11,align:'center',col:C.faint});
+      txt(ctx, G.Input.hasTouch() ? 'TAP BACK TO RETURN' : 'ESC / back to return',vw*0.5,vh-28,{size:11,align:'center',col:C.faint});
     },
 
     pause: function (ctx, g) {

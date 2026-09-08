@@ -75,6 +75,7 @@ G.Game = (function () {
     this.checkpoint = null;
     this.arenaTriggered = false;
     this.exitOpen = false;
+    this.exitInputPressed = false;
 
     this.acc = 0;
     this.last = 0;
@@ -159,6 +160,15 @@ G.Game = (function () {
           delete active[t.identifier];
         }
       }
+      // When the final finger leaves, forcibly clear every virtual control.
+      // This prevents a canceled/dragged touch from leaving PAUSE latched,
+      // which previously made an empty tap near the bottom appear to pause.
+      if (ev.touches && ev.touches.length === 0) {
+        for (var k in G.UI.touchState) G.UI.touchState[k] = false;
+        var acts = ['left','right','jump','attack','dash','block','potion','pause'];
+        for (var ai = 0; ai < acts.length; ai++) G.Input.setTouch(acts[ai], false);
+        active = {};
+      }
       ev.preventDefault();
     }
     function touchMove(ev) {
@@ -226,10 +236,9 @@ G.Game = (function () {
     var hasSave = this.save.unlockedLevel > 0 || this.save.level > 1 || this.save.completed.some(Boolean);
     this.menu.set([
       { label: hasSave ? 'CONTINUE' : 'BEGIN', act: 'continue' },
-      { label: 'THE ROAD', act: 'select', right: (this.save.unlockedLevel + 1) + '/' + G.LEVELS.length },
+      { label: 'THE ROAD', act: 'select', right: 'LEVEL ' + (Math.min(this.save.unlockedLevel, G.LEVELS.length - 1) + 1) + '/' + G.LEVELS.length },
       { label: 'ATTUNEMENT', act: 'upgrade', right: this.availablePoints() > 0 ? '+' + this.availablePoints() : '' },
-      { label: this.save.settings.muted ? 'SOUND: OFF' : 'SOUND: ON', act: 'sound' },
-      { label: 'VIEW ZOOM: ' + Math.round(this.getViewZoom() * 100) + '%', act: 'viewZoom' },
+      { label: 'SETTINGS / CONTROLS', act: 'settings' },
       { label: 'ERASE PROGRESS', act: 'wipe' }
     ]);
     G.Audio.music('calm');
@@ -243,7 +252,7 @@ G.Game = (function () {
     this.state = STATE.SETTINGS;
     this.menu.set([
       { label: 'CONTROL LAYOUT', act: 'layout' },
-      { label: 'VIEW ZOOM: ' + Math.round(this.getViewZoom() * 100) + '%', act: 'viewZoom' },
+      { label: 'ZOOM: ' + Math.round(this.getViewZoom() * 100) + '%', act: 'viewZoom' },
       { label: this.save.settings.muted ? 'SOUND: OFF' : 'SOUND: ON', act: 'sound' },
       { label: 'RESET CONTROL LAYOUT', act: 'resetLayout' },
       { label: 'BACK', act: 'settingsBack' }
@@ -305,6 +314,7 @@ G.Game = (function () {
     for (var i = 0; i < G.LEVELS.length; i++) {
       items.push({ label: G.LEVELS[i].name, disabled: i > this.save.unlockedLevel, act: 'level', i: i });
     }
+    items.push({ label: 'BACK', act: 'title' });
     this.menu.set(items);
     this.menu.index = M.clamp(this.save.unlockedLevel, 0, G.LEVELS.length - 1);
     G.Audio.music('calm');
@@ -314,6 +324,7 @@ G.Game = (function () {
     this.state = STATE.UPGRADE;
     var items = [];
     for (var i = 0; i < G.UI.STAT_INFO.length; i++) items.push({ label: G.UI.STAT_INFO[i].label, act: 'stat', i: i });
+    items.push({ label: 'BACK', act: 'back' });
     this.menu.set(items);
   };
 
@@ -340,6 +351,8 @@ G.Game = (function () {
 
   Game.prototype.startLevel = function (index, keepRunStats) {
     this.levelIndex = M.clamp(index, 0, G.LEVELS.length - 1);
+    this.save.lastStage = this.levelIndex;
+    G.Save.save(this.save);
     var d = G.Levels.get(this.levelIndex);
     this.level = d;
 
@@ -430,7 +443,10 @@ G.Game = (function () {
     if (z !== 0.85 && z !== 1 && z !== 1.15) z = 1;
     this.save.settings.viewZoom = z;
     G.Save.save(this.save);
-    if (this.state === STATE.PLAY && this.camera) {
+    if (this.camera) {
+      // Apply the value immediately so changes made from the in-game Settings
+      // screen are already active when the player returns to gameplay.
+      this.camera.zoom = z;
       this.camera.zoomTarget = z;
     }
   };
@@ -684,11 +700,15 @@ G.Game = (function () {
         break;
       case 'select': this.toSelect(); break;
       case 'title': this.toTitle(); break;
+      case 'back': this.back(); break;
       case 'settings': this.toSettings(); break;
       case 'layout': this.toLayout(); break;
       case 'settingsBack':
-        if (this.settingsReturnState === STATE.PAUSE) { this.state = STATE.PLAY; this.togglePause(); }
-        else this.toTitle();
+        if (this.settingsReturnState === STATE.PAUSE) {
+          this.state = STATE.PLAY;
+          this.settingsReturnState = null;
+          G.Audio.music(this.level && this.level.boss ? 'tense' : 'calm');
+        } else this.toTitle();
         break;
       case 'resetLayout': this.resetControlLayout(); break;
       case 'viewZoom': {
@@ -736,7 +756,11 @@ G.Game = (function () {
     switch (this.state) {
       case STATE.SELECT: this.toTitle(); break;
       case STATE.SETTINGS:
-        if (this.settingsReturnState === STATE.PAUSE) { this.state = STATE.PLAY; this.togglePause(); } else this.toTitle();
+        if (this.settingsReturnState === STATE.PAUSE) {
+          this.state = STATE.PLAY;
+          this.settingsReturnState = null;
+          G.Audio.music(this.level && this.level.boss ? 'tense' : 'calm');
+        } else this.toTitle();
         break;
       case STATE.LAYOUT: this.saveLayout(); this.toSettings(); break;
       case STATE.UPGRADE:
@@ -807,6 +831,9 @@ G.Game = (function () {
 
     var I = G.Input;
     if (I.pressed('pause')) { this.togglePause(); return; }
+    // Capture a jump/up press before Player.update() consumes it. On Android
+    // the jump button is the natural replacement for W/Up at an exit.
+    this.exitInputPressed = I.pressed('up') || I.pressed('jump');
 
     this.runTime += dt;
 
@@ -943,7 +970,7 @@ G.Game = (function () {
     if (nearExit) {
       if (this.exitOpen) {
         this.prompt = 'W  /  ↑   enter the gate';
-        if (G.Input.down('up') || G.Input.pressed('jump')) {
+        if (G.Input.down('up') || this.exitInputPressed) {
           G.Audio.play('door');
           this.completeLevel();
         }
