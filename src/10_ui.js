@@ -196,21 +196,25 @@ G.UI = (function () {
   /* ------------------------------------------------------------- touch --- */
   /* Layout is computed from the viewport so it works in any aspect ratio. */
   function touchLayout(vw, vh) {
-    var s = Math.max(52, Math.min(vw, vh) * 0.115);
-    var pad = s * 0.42;
+    /* Mobile controls: keep movement simple (left/right only) and give the
+       combat buttons a clean, widely-spaced diamond so fingers don't collide.
+       Jump also acts as the contextual 'enter gate' button in gameplay. */
+    var s = Math.max(54, Math.min(vw, vh) * 0.115);
+    var pad = s * 0.55;
     var by = vh - pad - s;
+    var gap = s * 1.28;
+    var actionRight = vw - pad - s;
+    var actionLeft = actionRight - gap;
     return {
       s: s,
-      left:   { x: pad,                 y: by,             w: s, h: s, act: 'left',   icon: '◀' },
-      right:  { x: pad + s * 1.15,      y: by,             w: s, h: s, act: 'right',  icon: '▶' },
-      down:   { x: pad + s * 0.575,     y: by - s * 1.15,  w: s, h: s, act: 'down',   icon: '▼' },
-      up:     { x: pad + s * 0.575,     y: by - s * 2.30,  w: s, h: s, act: 'up',     icon: '▲' },
-      attack: { x: vw - pad - s * 1.15, y: by,             w: s, h: s, act: 'attack', icon: 'ATK', col: '#c4283c' },
-      jump:   { x: vw - pad - s * 2.30, y: by - s * 0.45,  w: s, h: s, act: 'jump',   icon: 'JMP', col: '#4e8ad8' },
-      dash:   { x: vw - pad - s * 1.15, y: by - s * 1.15,  w: s, h: s, act: 'dash',   icon: 'DSH', col: '#4ec8a8' },
-      block:  { x: vw - pad - s * 2.30, y: by - s * 1.60,  w: s, h: s, act: 'block',  icon: 'GRD', col: '#c8a24e' },
-      potion: { x: vw - pad - s * 0.55, y: by - s * 2.40,  w: s * 0.9, h: s * 0.9, act: 'potion', icon: '+', col: '#4ec87a' },
-      pause:  { x: vw - pad - s * 0.75, y: pad * 0.6,      w: s * 0.75, h: s * 0.75, act: 'pause', icon: '‖' }
+      left:   { x: pad,             y: by,                 w: s, h: s, act: 'left',   icon: '◀' },
+      right:  { x: pad + gap,       y: by,                 w: s, h: s, act: 'right',  icon: '▶' },
+      attack: { x: actionRight,     y: by,                 w: s, h: s, act: 'attack', icon: 'ATK', col: '#c4283c' },
+      jump:   { x: actionLeft,      y: by,                 w: s, h: s, act: 'jump',   icon: 'JMP', col: '#4e8ad8' },
+      dash:   { x: actionRight,     y: by - gap,           w: s, h: s, act: 'dash',   icon: 'DSH', col: '#4ec8a8' },
+      block:  { x: actionLeft,      y: by - gap,           w: s, h: s, act: 'block',  icon: 'GRD', col: '#c8a24e' },
+      potion: { x: actionRight,     y: by - gap * 2,       w: s * 0.86, h: s * 0.86, act: 'potion', icon: '+', col: '#4ec87a' },
+      pause:  { x: vw - pad - s * 0.75, y: pad * 0.55,     w: s * 0.75, h: s * 0.75, act: 'pause', icon: '‖' }
     };
   }
 

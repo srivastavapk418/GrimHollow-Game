@@ -479,6 +479,14 @@ G.Game = (function () {
     var i = this.levelIndex;
     this.save.completed[i] = true;
     if (i + 1 > this.save.unlockedLevel && i + 1 < G.LEVELS.length) this.save.unlockedLevel = i + 1;
+
+    /* Completing a stage should visibly advance the player's RPG level.
+       Grant exactly one current-level XP threshold; existing enemy XP is
+       preserved, so the player always gains at least one level per cleared
+       stage without being given an arbitrary fixed amount. */
+    var completionXp = this.xpForLevel(this.save.level);
+    this.grantXp(completionXp, this.player.body.cx(), this.player.body.y);
+
     this.save.totalTime += this.runTime;
     G.Save.save(this.save);
     G.Audio.play('victory');
@@ -829,8 +837,8 @@ G.Game = (function () {
     var nearExit = Math.abs(b.cx() - ex) < 34 && Math.abs(b.y + b.h - ey) < 70;
     if (nearExit) {
       if (this.exitOpen) {
-        this.prompt = 'W  /  ↑   enter the gate';
-        if (G.Input.down('up')) {
+        this.prompt = G.Input.hasTouch() ? 'JMP   enter the gate' : 'W  /  ↑   enter the gate';
+        if (G.Input.down('up') || G.Input.down('jump')) {
           G.Audio.play('door');
           this.completeLevel();
         }
