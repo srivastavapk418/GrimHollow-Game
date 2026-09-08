@@ -656,10 +656,11 @@ check('pause round-trip preserves the level', () => {
 check('every menu action is handled (no silent no-ops)', () => {
   const acts = new Set();
   const screens = [() => game.toTitle(), () => game.toSelect(), () => game.toUpgrade(),
-                   () => { game.startLevel(0, false); game.togglePause(); }, () => game.toDeath()];
+                   () => game.toSettings(), () => game.toLayout(), () => { game.startLevel(0, false); game.togglePause(); }, () => game.toDeath()];
   for (const mk of screens) { mk(); for (const it of game.menu.items) acts.add(it.act); }
-  const handled = new Set(['continue', 'select', 'title', 'upgrade', 'sound', 'viewZoom', 'wipe',
-                           'level', 'stat', 'resume', 'restart', 'respawn', 'quit', 'next']);
+  const handled = new Set(['continue', 'select', 'title', 'upgrade', 'sound', 'wipe',
+                           'level', 'stat', 'resume', 'restart', 'respawn', 'quit', 'next',
+                           'settings', 'layout', 'settingsBack', 'resetLayout', 'viewZoom']);
   const unknown = [...acts].filter(a => !handled.has(a));
   if (unknown.length) throw new Error('unhandled menu actions: ' + unknown.join(', '));
   note(`menu actions in use: ${[...acts].sort().join(', ')}`);
@@ -678,6 +679,11 @@ check('view zoom changes gameplay camera without resizing menus', () => {
   if (game.vw !== beforeW || game.vh !== beforeH) throw new Error('view zoom changed menu viewport');
   game.save.settings.viewZoom = 1;
   game.resize();
+  game.toSettings();
+  game.menu.index = game.menu.items.findIndex(it => it.act === 'viewZoom');
+  game.confirm();
+  if (Math.abs(game.save.settings.viewZoom - 1.15) > 0.001) throw new Error('settings view zoom action did not change viewZoom');
+  if ('quality' in game.save.settings) throw new Error('quality setting still present');
   return true;
 });
 
@@ -696,7 +702,21 @@ check('touch controls map to real input actions', () => {
   for (const a of valid) {
     if (!buttons.some(k => layout[k].act === a)) throw new Error('no touch button for "' + a + '"');
   }
-  note(`${buttons.length} touch buttons, all hit-testable, all 10 actions covered`);
+  note(`${buttons.length} touch buttons, all hit-testable, all gameplay touch actions covered`);
+  return true;
+});
+
+check('custom control/HUD layout persists and is editable', () => {
+  game.save.settings.layout = G.UI.cloneLayout(null);
+  const l = G.UI.getLayout(game);
+  l.touch.left.x = 0.20; l.touch.left.y = 0.70; l.touch.left.w = 0.14; l.touch.left.h = 0.14;
+  l.hud.health.x = 0.03; l.hud.health.w = 0.22;
+  l.hud.boss.x = 0.28; l.hud.boss.y = 0.04; l.hud.boss.w = 0.44;
+  G.UI.clampLayoutItem(l.touch.left); G.UI.clampLayoutItem(l.hud.health); G.UI.clampLayoutItem(l.hud.boss);
+  game.saveLayout();
+  const raw = G.Save.load();
+  if (!raw.settings.layout || Math.abs(raw.settings.layout.touch.left.x - 0.20) > 0.001) throw new Error('layout did not persist');
+  if (Object.keys(G.UI.touchLayout(900,500,raw.settings)).length !== 8) throw new Error('custom layout lost a touch control');
   return true;
 });
 

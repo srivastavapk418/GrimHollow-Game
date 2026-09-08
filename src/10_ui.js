@@ -194,62 +194,118 @@ G.UI = (function () {
   };
 
   /* ------------------------------------------------------------- touch --- */
-  /* Layout is computed from the viewport so it works in any aspect ratio. */
-  function touchLayout(vw, vh) {
-    // Mobile controls use only the actions that are meaningful for gameplay.
-    // The old UP/DOWN buttons duplicated navigation and crowded the left side.
-    var s = Math.max(50, Math.min(vw, vh) * 0.105);
-    var gap = s * 0.18;
-    var edge = Math.max(16, s * 0.34);
-    var bottom = Math.max(16, s * 0.26);
-    var by = vh - bottom - s;
-    return {
-      left:   { x: edge, y: by, w: s, h: s, act: 'left', icon: '◀' },
-      right:  { x: edge + s + gap, y: by, w: s, h: s, act: 'right', icon: '▶' },
-      jump:   { x: vw - edge - s * 2.20, y: by - s * 0.48, w: s, h: s, act: 'jump', icon: 'JMP', col: '#4e8ad8' },
-      dash:   { x: vw - edge - s * 1.10, y: by - s * 1.10, w: s, h: s, act: 'dash', icon: 'DSH', col: '#4ec8a8' },
-      block:  { x: vw - edge - s * 2.20, y: by - s * 1.56, w: s, h: s, act: 'block', icon: 'GRD', col: '#c8a24e' },
-      attack: { x: vw - edge - s * 1.10, y: by, w: s, h: s, act: 'attack', icon: 'ATK', col: '#c4283c' },
-      potion: { x: vw - edge - s * 0.12, y: by - s * 2.10, w: s * 0.82, h: s * 0.82, act: 'potion', icon: '+', col: '#4ec87a' },
-      pause:  { x: vw - edge - s * 0.82, y: Math.max(12, edge * 0.48), w: s * 0.72, h: s * 0.72, act: 'pause', icon: '‖' }
+  /* User-customisable screen layout. Positions/sizes are persisted as viewport
+     fractions, so the arrangement survives rotation and different phones. */
+  var DEFAULT_TOUCH = {
+    left:   { x: 0.055, y: 0.765, w: 0.105, h: 0.155 },
+    right:  { x: 0.170, y: 0.765, w: 0.105, h: 0.155 },
+    attack: { x: 0.895, y: 0.770, w: 0.090, h: 0.135, col: '#c4283c' },
+    jump:   { x: 0.775, y: 0.735, w: 0.090, h: 0.135, col: '#4e8ad8' },
+    dash:   { x: 0.895, y: 0.615, w: 0.090, h: 0.135, col: '#4ec8a8' },
+    block:  { x: 0.775, y: 0.555, w: 0.090, h: 0.135, col: '#c8a24e' },
+    potion: { x: 0.925, y: 0.465, w: 0.065, h: 0.100, col: '#4ec87a' },
+    pause:  { x: 0.930, y: 0.045, w: 0.055, h: 0.085 }
+  };
+
+  var DEFAULT_HUD = {
+    health: { x: 0.018, y: 0.028, w: 0.300, h: 0.115 },
+    xp:     { x: 0.785, y: 0.028, w: 0.195, h: 0.085 },
+    boss:   { x: 0.280, y: 0.120, w: 0.440, h: 0.100 }
+  };
+
+  var LAYOUT_META = [
+    { id: 'left',   label: 'MOVE LEFT', group: 'touch', icon: '◀' },
+    { id: 'right',  label: 'MOVE RIGHT', group: 'touch', icon: '▶' },
+    { id: 'jump',   label: 'JUMP', group: 'touch', icon: 'JMP' },
+    { id: 'attack', label: 'ATTACK', group: 'touch', icon: 'ATK' },
+    { id: 'dash',   label: 'DASH', group: 'touch', icon: 'DSH' },
+    { id: 'block',  label: 'GUARD', group: 'touch', icon: 'GRD' },
+    { id: 'potion', label: 'POTION', group: 'touch', icon: '+' },
+    { id: 'pause',  label: 'PAUSE', group: 'touch', icon: '‖' },
+    { id: 'health', label: 'HEALTH BAR', group: 'hud' },
+    { id: 'xp',     label: 'LEVEL / XP', group: 'hud' },
+    { id: 'boss',   label: 'BOSS BAR', group: 'hud' }
+  ];
+
+  function cloneLayout(src) {
+    var out = { touch: {}, hud: {} };
+    var groups = ['touch', 'hud'];
+    for (var gi = 0; gi < groups.length; gi++) {
+      var gname = groups[gi], base = gname === 'touch' ? DEFAULT_TOUCH : DEFAULT_HUD;
+      for (var k in base) {
+        var v = (src && src[gname] && src[gname][k]) || base[k];
+        out[gname][k] = { x: v.x, y: v.y, w: v.w, h: v.h };
+      }
+    }
+    return out;
+  }
+
+  function getLayout(g) {
+    if (!g || !g.save) return cloneLayout(null);
+    if (!g.save.settings.layout) g.save.settings.layout = cloneLayout(null);
+    return g.save.settings.layout;
+  }
+
+  function clampLayoutItem(v) {
+    v.w = M.clamp(v.w, 0.035, 0.45);
+    v.h = M.clamp(v.h, 0.035, 0.35);
+    v.x = M.clamp(v.x, 0.005, 0.995 - v.w);
+    v.y = M.clamp(v.y, 0.005, 0.995 - v.h);
+  }
+
+  function touchLayout(vw, vh, settings) {
+    var layout = settings && settings.layout ? settings.layout : null;
+    var base = cloneLayout(layout);
+    var acts = {
+      left:   { icon: '◀' }, right: { icon: '▶' }, jump: { icon: 'JMP', col: '#4e8ad8' },
+      attack: { icon: 'ATK', col: '#c4283c' }, dash: { icon: 'DSH', col: '#4ec8a8' },
+      block:  { icon: 'GRD', col: '#c8a24e' }, potion: { icon: '+', col: '#4ec87a' }, pause: { icon: '‖' }
     };
+    var out = {};
+    for (var k in acts) {
+      var v = base.touch[k], m = acts[k];
+      out[k] = {
+        x: v.x * vw, y: v.y * vh, w: v.w * vw, h: v.h * vh,
+        act: k, icon: m.icon, col: m.col
+      };
+    }
+    return out;
   }
 
   var touchState = {};
 
-  function drawTouch(ctx, vw, vh) {
-    var L = touchLayout(vw, vh);
+  function drawTouch(ctx, vw, vh, g) {
+    var L = touchLayout(vw, vh, g && g.save.settings);
     ctx.save();
     for (var k in L) {
-      if (k === 's') continue;
-      var b = L[k];
-      var on = !!touchState[b.act];
-      ctx.globalAlpha = on ? 0.62 : 0.26;
+      var b = L[k], on = !!touchState[b.act];
+      var rr = Math.min(b.w, b.h) * 0.5;
+      ctx.globalAlpha = on ? 0.70 : 0.30;
       ctx.fillStyle = b.col || '#d8d2c4';
       ctx.beginPath();
-      ctx.arc(b.x + b.w * 0.5, b.y + b.h * 0.5, b.w * 0.5, 0, 6.2832);
+      ctx.ellipse(b.x + b.w * 0.5, b.y + b.h * 0.5, b.w * 0.5, b.h * 0.5, 0, 0, 6.2832);
       ctx.fill();
-      ctx.globalAlpha = on ? 0.95 : 0.5;
-      ctx.strokeStyle = '#0b0a10';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.globalAlpha = on ? 1 : 0.75;
-      txt(ctx, b.icon, b.x + b.w * 0.5, b.y + b.h * 0.5 + (b.icon.length > 1 ? 5 : 6), {
-        size: b.icon.length > 1 ? b.w * 0.26 : b.w * 0.40,
+      ctx.globalAlpha = on ? 0.98 : 0.55;
+      ctx.strokeStyle = '#0b0a10'; ctx.lineWidth = Math.max(1.5, Math.min(b.w, b.h) * 0.025); ctx.stroke();
+      ctx.globalAlpha = on ? 1 : 0.78;
+      txt(ctx, b.icon, b.x + b.w * 0.5, b.y + b.h * 0.5 + (b.icon.length > 1 ? Math.min(6, b.h * 0.12) : Math.min(7, b.h * 0.14)), {
+        size: b.icon.length > 1 ? Math.min(b.w, b.h) * 0.25 : Math.min(b.w, b.h) * 0.38,
         align: 'center', col: '#0b0a10', weight: '800', stroke: false
       });
+      // subtle highlight gives the controls a glassy, more game-like finish
+      ctx.globalAlpha = on ? 0.22 : 0.10;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.ellipse(b.x + b.w * 0.36, b.y + b.h * 0.28, b.w * 0.18, b.h * 0.11, -0.3, 0, 6.2832); ctx.fill();
     }
     ctx.restore();
   }
 
-  function touchHit(vw, vh, px, py) {
-    var L = touchLayout(vw, vh);
+  function touchHit(vw, vh, px, py, settings) {
+    var L = touchLayout(vw, vh, settings);
     for (var k in L) {
-      if (k === 's') continue;
-      var b = L[k];
-      var cx = b.x + b.w * 0.5, cy = b.y + b.h * 0.5;
-      var r = b.w * 0.62;      // slightly generous hit radius
-      if ((px - cx) * (px - cx) + (py - cy) * (py - cy) <= r * r) return b.act;
+      var b = L[k], cx = b.x + b.w * 0.5, cy = b.y + b.h * 0.5;
+      var rx = b.w * 0.62, ry = b.h * 0.62;
+      if (((px - cx) / rx) * ((px - cx) / rx) + ((py - cy) / ry) * ((py - cy) / ry) <= 1) return b.act;
     }
     return null;
   }
@@ -258,25 +314,29 @@ G.UI = (function () {
   function drawHUD(ctx, g) {
     var vw = g.vw, vh = g.vh, p = g.player, s = g.save;
     var pad = 16;
+    var lay = getLayout(g);
 
     /* --- health / stamina cluster --- */
-    var bw = Math.min(300, vw * 0.30), bh = 15;
-    panel(ctx, pad - 6, pad - 6, bw + 12, 62, { r: 5 });
+    var hb = lay.hud.health;
+    var hx = hb.x * vw, hy = hb.y * vh, bw = hb.w * vw, hh = hb.h * vh;
+    var bh = M.clamp(hh * 0.27, 11, 22);
+    panel(ctx, hx - 6, hy - 6, bw + 12, hh + 12, { r: 7 });
 
     var hpFrac = p.hp / p.maxHp;
-    bar(ctx, pad, pad, bw, bh, hpFrac, C.hp, C.hpBack, { ghost: g.hpGhost, ghostCol: 'rgba(255,180,180,0.30)' });
-    txt(ctx, Math.max(0, Math.ceil(p.hp)) + ' / ' + Math.round(p.maxHp), pad + bw - 4, pad + bh - 3,
-      { size: 11, align: 'right', col: '#ffdede', weight: '700' });
+    bar(ctx, hx, hy, bw, bh, hpFrac, C.hp, C.hpBack, { ghost: g.hpGhost, ghostCol: 'rgba(255,180,180,0.30)' });
+    txt(ctx, Math.max(0, Math.ceil(p.hp)) + ' / ' + Math.round(p.maxHp), hx + bw - 4, hy + bh - 3,
+      { size: Math.max(9, Math.min(13, bh * 0.72)), align: 'right', col: '#ffdede', weight: '700' });
 
     var stFrac = p.stam / p.maxStam;
-    bar(ctx, pad, pad + bh + 5, bw * 0.82, 9, stFrac, C.stam, C.stamBack);
+    var sy = hy + bh + Math.max(4, hh * 0.08);
+    bar(ctx, hx, sy, bw * 0.82, Math.max(7, bh * 0.60), stFrac, C.stam, C.stamBack);
     if (p.blockBreak > 0) {
-      txt(ctx, 'GUARD BROKEN', pad + bw * 0.82 + 8, pad + bh + 13,
+      txt(ctx, 'GUARD BROKEN', hx + bw * 0.82 + 8, sy + Math.max(8, bh * 0.58),
         { size: 10, col: '#ff9a5a', weight: '800' });
     }
 
     /* potions */
-    var py = pad + bh + 22;
+    var py = sy + Math.max(16, bh * 1.35);
     for (var i = 0; i < s.maxPotions; i++) {
       var have = i < s.potions;
       ctx.save();
@@ -292,15 +352,15 @@ G.UI = (function () {
     txt(ctx, 'L', pad + s.maxPotions * 16 + 6, py + 12, { size: 10, col: C.faint });
 
     /* --- level / xp --- */
-    var xw = Math.min(190, vw * 0.20);
-    var xx = vw - pad - xw;
-    panel(ctx, xx - 8, pad - 6, xw + 16, 44, { r: 5 });
-    txt(ctx, 'LV ' + s.level, xx, pad + 12, { size: 15, col: C.gold, weight: '800' });
+    var xb = lay.hud.xp;
+    var xx = xb.x * vw, xy = xb.y * vh, xw = xb.w * vw, xh = xb.h * vh;
+    panel(ctx, xx - 8, xy - 6, xw + 16, xh + 12, { r: 7 });
+    txt(ctx, 'LV ' + s.level, xx, xy + Math.max(14, xh * 0.34), { size: Math.max(13, Math.min(19, xh * 0.38)), col: C.gold, weight: '800' });
     var need = g.xpForLevel(s.level);
     var have2 = s.xp;
-    txt(ctx, have2 + ' / ' + need, xx + xw, pad + 12, { size: 11, align: 'right', col: C.dim });
-    bar(ctx, xx, pad + 18, xw, 7, have2 / need, C.xp, '#16203a');
-    txt(ctx, '◇ ' + s.gold, xx + xw, pad + 36, { size: 12, align: 'right', col: C.gold, weight: '700' });
+    txt(ctx, have2 + ' / ' + need, xx + xw, xy + Math.max(14, xh * 0.34), { size: 11, align: 'right', col: C.dim });
+    bar(ctx, xx, xy + xh * 0.47, xw, Math.max(7, xh * 0.17), have2 / need, C.xp, '#16203a');
+    txt(ctx, '◇ ' + s.gold, xx + xw, xy + xh * 0.90, { size: 12, align: 'right', col: C.gold, weight: '700' });
 
     /* --- ability readiness pips --- */
     var ax = pad, ay = vh - pad - 12;
@@ -372,13 +432,13 @@ G.UI = (function () {
       });
     }
 
-    if (G.Input.hasTouch() && s.settings.showTouch !== false) drawTouch(ctx, vw, vh);
+    if (G.Input.hasTouch() && s.settings.showTouch !== false) drawTouch(ctx, vw, vh, g);
   }
 
   function drawBossBar(ctx, g, boss) {
-    var vw = g.vw;
-    var w = Math.min(560, vw * 0.62), h = 13;
-    var x = (vw - w) * 0.5, y = g.vh - 78;
+    var vw = g.vw, vh = g.vh;
+    var bb = getLayout(g).hud.boss;
+    var x = bb.x * vw, y = bb.y * vh, w = bb.w * vw, h = M.clamp(bb.h * vh * 0.28, 8, 20);
     var frac = M.clamp(boss.hp / boss.maxHp, 0, 1);
 
     txt(ctx, boss.def.name, vw * 0.5, y - 12,
@@ -477,6 +537,25 @@ G.UI = (function () {
   }
 
   /* --------------------------------------------------------- upgrades --- */
+  function drawEditorButton(ctx,x,y,w,h,label,action,g){
+    var active = g.layoutEditor && g.layoutEditor.lastAction === action;
+    panel(ctx,x,y,w,h,{r:6,fill:active?'rgba(224,182,74,0.24)':'rgba(35,30,42,0.92)',edge:active?C.gold:'rgba(224,182,74,0.35)'});
+    txt(ctx,label,x+w/2,y+h*0.67,{size:10.5,align:'center',col:active?'#fff3c4':C.ink,weight:'800'});
+  }
+
+  function drawEditorHudPreview(ctx,g){
+    var lay=getLayout(g), vw=g.vw, vh=g.vh;
+    var hb=lay.hud.health, xb=lay.hud.xp, bb=lay.hud.boss;
+    ctx.save(); ctx.globalAlpha=0.42;
+    panel(ctx,hb.x*vw-6,hb.y*vh-6,hb.w*vw+12,hb.h*vh+12,{r:7});
+    bar(ctx,hb.x*vw,hb.y*vh,hb.w*vw,Math.max(10,hb.h*vh*0.27),0.76,C.hp,C.hpBack);
+    panel(ctx,xb.x*vw-6,xb.y*vh-6,xb.w*vw+12,xb.h*vh+12,{r:7});
+    txt(ctx,'LV 7',xb.x*vw,xb.y*vh+18,{size:15,col:C.gold,weight:'800'});
+    bar(ctx,xb.x*vw,xb.y*vh+25,xb.w*vw,7,0.58,C.xp,'#16203a');
+    ctx.globalAlpha=0.28; ctx.fillStyle='#b43c3c'; ctx.fillRect(bb.x*vw,bb.y*vh,bb.w*vw,Math.max(8,bb.h*vh*0.28));
+    ctx.restore();
+  }
+
   var STAT_INFO = [
     { k: 'vitality', label: 'VITALITY', desc: '+22 max health per point', col: '#c4283c' },
     { k: 'power', label: 'POWER', desc: '+16% attack damage per point', col: '#e08a3c' },
@@ -493,6 +572,81 @@ G.UI = (function () {
     drawHUD: drawHUD, drawBossBar: drawBossBar, drawTitleArt: drawTitleArt,
     drawTouch: drawTouch, touchHit: touchHit, touchLayout: touchLayout,
     touchState: touchState,
+    DEFAULT_TOUCH: DEFAULT_TOUCH,
+    DEFAULT_HUD: DEFAULT_HUD,
+    LAYOUT_META: LAYOUT_META,
+    cloneLayout: cloneLayout,
+    getLayout: getLayout,
+    clampLayoutItem: clampLayoutItem,
+    touchLayout: touchLayout,
+    touchHit: touchHit,
+
+    layoutEditor: function (ctx, g) {
+      var vw = g.vw, vh = g.vh, lay = getLayout(g);
+      ctx.fillStyle = 'rgba(6,5,9,0.96)'; ctx.fillRect(0, 0, vw, vh);
+      txt(ctx, 'CONTROL LAYOUT', vw * 0.5, Math.min(42, vh * 0.10), { size: Math.min(28, vw * 0.045), align: 'center', col: '#f4e9d2', weight: '800', serif: true });
+      txt(ctx, 'Tap an item to select · drag to move · use the size controls below', vw * 0.5, Math.min(65, vh * 0.15), { size: 11.5, align: 'center', col: C.dim });
+
+      // dim playfield and draw a representative HUD preview
+      ctx.save(); ctx.globalAlpha = 0.18; ctx.fillStyle = '#1b1724'; ctx.fillRect(0, 0, vw, vh); ctx.restore();
+      drawEditorHudPreview(ctx, g);
+
+      var selected = g.layoutEditor && g.layoutEditor.selected || 'left';
+      var meta = null;
+      for (var mi = 0; mi < LAYOUT_META.length; mi++) if (LAYOUT_META[mi].id === selected) { meta = LAYOUT_META[mi]; break; }
+      var all = [];
+      for (var ai = 0; ai < LAYOUT_META.length; ai++) all.push(LAYOUT_META[ai]);
+      for (var i = 0; i < all.length; i++) {
+        var m = all[i], v = lay[m.group][m.id];
+        var px = v.x * vw, py = v.y * vh, pw = v.w * vw, ph = v.h * vh;
+        var isSel = m.id === selected;
+        ctx.save();
+        ctx.globalAlpha = m.group === 'touch' ? 0.74 : 0.55;
+        if (m.group === 'touch') {
+          ctx.fillStyle = (m.id === 'attack' ? '#c4283c' : m.id === 'jump' ? '#4e8ad8' : m.id === 'dash' ? '#4ec8a8' : m.id === 'block' ? '#c8a24e' : '#d8d2c4');
+          ctx.beginPath(); ctx.ellipse(px + pw/2, py + ph/2, pw/2, ph/2, 0, 0, 6.2832); ctx.fill();
+          txt(ctx, m.icon, px + pw/2, py + ph/2 + (m.icon.length > 1 ? 5 : 6), { size: Math.max(10, Math.min(pw,ph)*0.25), align:'center', col:'#0b0a10', weight:'800', stroke:false });
+        } else {
+          ctx.fillStyle = isSel ? 'rgba(224,182,74,0.22)' : 'rgba(90,130,180,0.16)';
+          ctx.fillRect(px, py, pw, ph);
+          ctx.strokeStyle = isSel ? C.gold : 'rgba(150,170,200,0.65)'; ctx.lineWidth = isSel ? 3 : 1.5; ctx.strokeRect(px,py,pw,ph);
+          txt(ctx, m.label, px + pw/2, py + ph/2 + 5, { size: Math.max(9, Math.min(14, pw*0.06)), align:'center', col:'#fff3d0', weight:'800', stroke:false });
+        }
+        if (isSel) {
+          ctx.strokeStyle = C.gold; ctx.lineWidth = 2; ctx.setLineDash([5,4]); ctx.strokeRect(px-3,py-3,pw+6,ph+6); ctx.setLineDash([]);
+        }
+        ctx.restore();
+      }
+
+      var selV = lay[meta.group][meta.id];
+      var toolbarH = Math.min(86, Math.max(74, vh * 0.16));
+      var ty = vh - toolbarH - 10;
+      panel(ctx, 10, ty, vw - 20, toolbarH, { r: 9, fill: 'rgba(10,9,15,0.94)' });
+      txt(ctx, meta.label + '  ·  ' + meta.group.toUpperCase(), 24, ty + 22, { size: 13, col: C.gold, weight:'800' });
+      txt(ctx, 'X ' + Math.round(selV.x*100) + '%   Y ' + Math.round(selV.y*100) + '%   W ' + Math.round(selV.w*100) + '%   H ' + Math.round(selV.h*100) + '%', 24, ty + 40, { size: 10.5, col:C.dim });
+      drawEditorButton(ctx, 24, ty + 48, 66, 28, 'W −', 'wminus', g);
+      drawEditorButton(ctx, 96, ty + 48, 66, 28, 'W +', 'wplus', g);
+      drawEditorButton(ctx, 168, ty + 48, 66, 28, 'H −', 'hminus', g);
+      drawEditorButton(ctx, 240, ty + 48, 66, 28, 'H +', 'hplus', g);
+      drawEditorButton(ctx, vw - 174, ty + 48, 74, 28, 'RESET', 'reset', g);
+      drawEditorButton(ctx, vw - 92, ty + 48, 68, 28, 'DONE', 'done', g);
+    },
+
+    layoutEditorHit: function (g, px, py) {
+      var vw=g.vw, vh=g.vh, lay=getLayout(g), meta=null;
+      var selected = g.layoutEditor && g.layoutEditor.selected || 'left';
+      for (var i=0;i<LAYOUT_META.length;i++) if (LAYOUT_META[i].id===selected) meta=LAYOUT_META[i];
+      var toolbarH=Math.min(86,Math.max(74,vh*0.16)), ty=vh-toolbarH-10;
+      var buttons=[
+        {x:24,y:ty+48,w:66,h:28,a:'wminus'},{x:96,y:ty+48,w:66,h:28,a:'wplus'},
+        {x:168,y:ty+48,w:66,h:28,a:'hminus'},{x:240,y:ty+48,w:66,h:28,a:'hplus'},
+        {x:vw-174,y:ty+48,w:74,h:28,a:'reset'},{x:vw-92,y:ty+48,w:68,h:28,a:'done'}
+      ];
+      for(var bi=0;bi<buttons.length;bi++){var b=buttons[bi];if(px>=b.x&&px<=b.x+b.w&&py>=b.y&&py<=b.y+b.h)return {type:'button',action:b.a};}
+      for(var ri=LAYOUT_META.length-1;ri>=0;ri--){var m=LAYOUT_META[ri],v=lay[m.group][m.id];if(px>=v.x*vw&&px<=v.x*vw+v.w*vw&&py>=v.y*vh&&py<=v.y*vh+v.h*vh)return {type:'item',id:m.id};}
+      return null;
+    },
+
 
     /* ---------------------------------------------------- full screens -- */
 
@@ -684,6 +838,17 @@ G.UI = (function () {
       if (s.abilities.plunge) rel.push('Weight of Kings');
       txt(ctx, rel.length ? 'RELICS: ' + rel.join('  ·  ') : 'RELICS: none found',
         vw * 0.5, vh - 56, { size: 11.5, align: 'center', col: 'rgba(224,182,74,0.7)' });
+    },
+
+    settings: function (ctx, g) {
+      var vw=g.vw, vh=g.vh;
+      ctx.fillStyle='rgba(6,5,9,0.94)'; ctx.fillRect(0,0,vw,vh);
+      txt(ctx,'SETTINGS',vw*0.5,58,{size:30,align:'center',col:'#f4e9d2',weight:'800',serif:true});
+      txt(ctx,'Personalize mobile controls, HUD placement and rendering',vw*0.5,82,{size:12,align:'center',col:C.dim});
+      var mw=Math.min(540,vw*0.82);
+      g.menu.draw(ctx,(vw-mw)*0.5,112,mw,5,{rowH:42,size:17});
+      txt(ctx,'CONTROL LAYOUT: drag items, then adjust W/H. Changes save automatically.',vw*0.5,vh-48,{size:11,align:'center',col:C.faint});
+      txt(ctx,'ESC / back to return',vw*0.5,vh-28,{size:11,align:'center',col:C.faint});
     },
 
     pause: function (ctx, g) {

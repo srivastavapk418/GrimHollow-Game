@@ -704,7 +704,7 @@ G.LightPass = (function () {
   }
 
   LightPass.prototype.resize = function (w, h, quality) {
-    this.div = 1;
+    this.div = quality === 'low' ? 3 : (quality === 'high' ? 1 : 2);
     var nw = Math.max(1, Math.ceil(w / this.div)), nh = Math.max(1, Math.ceil(h / this.div));
     if (nw !== this.w || nh !== this.h) {
       this.w = nw; this.h = nh;

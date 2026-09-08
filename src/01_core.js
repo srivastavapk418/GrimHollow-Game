@@ -466,7 +466,7 @@ G.Save = (function () {
       potions: 3, maxPotions: 3,
       secrets: [],            // array of "levelId:index" strings
       totalDeaths: 0, totalTime: 0,
-      settings: { muted: false, shake: 1, viewZoom: 1, showTouch: 'auto' }
+      settings: { muted: false, shake: 1, viewZoom: 1, showTouch: 'auto', layout: null }
     };
   }
 
@@ -532,6 +532,9 @@ G.Save = (function () {
       b.settings.viewZoom = [0.85, 1, 1.15].indexOf(vz) >= 0 ? vz : 1;
       b.settings.showTouch = (['auto', 'on', 'off'].indexOf(d.settings.showTouch) >= 0)
         ? d.settings.showTouch : 'auto';
+      if (d.settings.layout && typeof d.settings.layout === 'object') {
+        b.settings.layout = d.settings.layout;
+      }
     }
 
     // A save can't claim more spent stat points than its level has earned.
