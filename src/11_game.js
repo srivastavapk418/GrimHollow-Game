@@ -19,7 +19,9 @@ G.Game = (function () {
     PAUSE: 'pause',
     DEAD: 'dead',
     CLEAR: 'clear',
-    VICTORY: 'victory'
+    VICTORY: 'victory',
+    SETTINGS: 'settings',
+    LAYOUT: 'layout'
   };
 
   function Game(canvas) {
@@ -104,15 +106,21 @@ G.Game = (function () {
     this.canvas.addEventListener('mousemove', function (ev) {
       var p = pos(ev);
       self.pointerX = p.x; self.pointerY = p.y;
-      if (self.inMenu()) self.menu.pointer(p.x, p.y);
+      if (self.state === STATE.LAYOUT) self.layoutPointer(p.x, p.y, 'move');
+      else if (self.inMenu()) self.menu.pointer(p.x, p.y);
     });
     this.canvas.addEventListener('mousedown', function (ev) {
       G.Audio.unlock();
       var p = pos(ev);
-      if (self.inMenu()) {
+      if (self.state === STATE.LAYOUT) self.layoutPointer(p.x, p.y, 'start');
+      else if (self.inMenu()) {
         var hit = self.menu.pointer(p.x, p.y);
         if (hit >= 0 && !self.menu.items[hit].disabled) self.confirm();
       }
+      ev.preventDefault();
+    });
+    this.canvas.addEventListener('mouseup', function (ev) {
+      if (self.state === STATE.LAYOUT) { var p = pos(ev); self.layoutPointer(p.x, p.y, 'end'); }
       ev.preventDefault();
     });
 
@@ -125,12 +133,13 @@ G.Game = (function () {
         var r = self.canvas.getBoundingClientRect();
         var x = (t.clientX - r.left) * (self.vw / r.width);
         var y = (t.clientY - r.top) * (self.vh / r.height);
+        if (self.state === STATE.LAYOUT) { self.layoutPointer(x, y, 'start'); active[t.identifier] = '__layout__'; continue; }
         if (self.inMenu()) {
           var hit = self.menu.pointer(x, y);
           if (hit >= 0 && !self.menu.items[hit].disabled) self.confirm();
           continue;
         }
-        var act = G.UI.touchHit(self.vw, self.vh, x, y);
+        var act = G.UI.touchHit(self.vw, self.vh, x, y, self.save.settings);
         if (act) {
           active[t.identifier] = act;
           G.UI.touchState[act] = true;
@@ -143,6 +152,7 @@ G.Game = (function () {
       for (var i = 0; i < ev.changedTouches.length; i++) {
         var t = ev.changedTouches[i];
         var act = active[t.identifier];
+        if (act === '__layout__') { self.layoutPointer(0, 0, 'end'); delete active[t.identifier]; continue; }
         if (act) {
           G.UI.touchState[act] = false;
           G.Input.setTouch(act, false);
@@ -159,7 +169,8 @@ G.Game = (function () {
         var x = (t.clientX - r.left) * (self.vw / r.width);
         var y = (t.clientY - r.top) * (self.vh / r.height);
         var was = active[t.identifier];
-        var now = G.UI.touchHit(self.vw, self.vh, x, y);
+        if (self.state === STATE.LAYOUT && was === '__layout__') { self.layoutPointer(x, y, 'move'); continue; }
+        var now = G.UI.touchHit(self.vw, self.vh, x, y, self.save.settings);
         if (was !== now) {
           if (was) { G.UI.touchState[was] = false; G.Input.setTouch(was, false); }
           if (now) { G.UI.touchState[now] = true; G.Input.setTouch(now, true); }
@@ -204,7 +215,7 @@ G.Game = (function () {
   Game.prototype.inMenu = function () {
     return this.state === STATE.TITLE || this.state === STATE.SELECT ||
            this.state === STATE.UPGRADE || this.state === STATE.PAUSE ||
-           this.state === STATE.DEAD || this.state === STATE.CLEAR ||
+           this.state === STATE.SETTINGS || this.state === STATE.LAYOUT || this.state === STATE.DEAD || this.state === STATE.CLEAR ||
            this.state === STATE.VICTORY;
   };
 
@@ -217,10 +228,76 @@ G.Game = (function () {
       { label: 'THE ROAD', act: 'select', right: (this.save.unlockedLevel + 1) + '/' + G.LEVELS.length },
       { label: 'ATTUNEMENT', act: 'upgrade', right: this.availablePoints() > 0 ? '+' + this.availablePoints() : '' },
       { label: this.save.settings.muted ? 'SOUND: OFF' : 'SOUND: ON', act: 'sound' },
-      { label: 'QUALITY: ' + (this.save.settings.quality || 'med').toUpperCase(), act: 'quality' },
+      { label: 'RENDER DETAIL: ' + (this.save.settings.quality || 'med').toUpperCase(), act: 'quality' },
+      { label: 'SETTINGS / CONTROLS', act: 'settings' },
       { label: 'ERASE PROGRESS', act: 'wipe' }
     ]);
     G.Audio.music('calm');
+  };
+
+  Game.prototype.toSettings = function () {
+    if (this.state === STATE.PAUSE) this.settingsReturnState = STATE.PAUSE;
+    else if (this.state === STATE.LAYOUT) this.settingsReturnState = this.layoutReturnState === STATE.PAUSE ? STATE.PAUSE : STATE.TITLE;
+    else if (this.state === STATE.TITLE) this.settingsReturnState = STATE.TITLE;
+    else if (!this.settingsReturnState) this.settingsReturnState = STATE.TITLE;
+    this.state = STATE.SETTINGS;
+    this.menu.set([
+      { label: 'CONTROL LAYOUT', act: 'layout' },
+      { label: 'RENDER DETAIL: ' + (this.save.settings.quality || 'med').toUpperCase(), act: 'quality' },
+      { label: 'VIEW ZOOM: ' + Math.round((this.save.settings.cameraZoom || 1) * 100) + '%', act: 'viewZoom' },
+      { label: this.save.settings.muted ? 'SOUND: OFF' : 'SOUND: ON', act: 'sound' },
+      { label: 'RESET CONTROL LAYOUT', act: 'resetLayout' },
+      { label: 'BACK', act: 'settingsBack' }
+    ]);
+  };
+
+  Game.prototype.toLayout = function () {
+    this.layoutReturnState = this.state;
+    if (!this.save.settings.layout) this.save.settings.layout = G.UI.cloneLayout(null);
+    this.state = STATE.LAYOUT;
+    this.layoutEditor = { selected: 'left', dragging: false, dragId: null, dx: 0, dy: 0, lastAction: '' };
+  };
+
+  Game.prototype.saveLayout = function () { G.Save.save(this.save); };
+
+  Game.prototype.resetControlLayout = function () {
+    this.save.settings.layout = G.UI.cloneLayout(null);
+    this.saveLayout();
+    if (this.state === STATE.SETTINGS) this.toSettings();
+    else if (this.state === STATE.LAYOUT) this.layoutEditor.selected = 'left';
+  };
+
+  Game.prototype.layoutPointer = function (px, py, phase) {
+    if (!this.layoutEditor) this.layoutEditor = { selected:'left', dragging:false, dragId:null, dx:0, dy:0, lastAction:'' };
+    var ed=this.layoutEditor, hit=G.UI.layoutEditorHit(this,px,py), lay=G.UI.getLayout(this);
+    if (phase==='start') {
+      ed.lastAction='';
+      if (hit && hit.type==='button') {
+        ed.lastAction=hit.action;
+        if (hit.action==='done') { this.saveLayout(); this.toSettings(); return true; }
+        if (hit.action==='reset') { this.resetControlLayout(); return true; }
+        var meta=null; for(var mi=0;mi<G.UI.LAYOUT_META.length;mi++) if(G.UI.LAYOUT_META[mi].id===ed.selected){meta=G.UI.LAYOUT_META[mi];break;}
+        if(meta){var v=lay[meta.group][ed.selected];
+          if(hit.action==='wminus') v.w-=0.01; if(hit.action==='wplus') v.w+=0.01;
+          if(hit.action==='hminus') v.h-=0.01; if(hit.action==='hplus') v.h+=0.01;
+          G.UI.clampLayoutItem(v); this.saveLayout();
+        }
+        return true;
+      }
+      if (hit && hit.type==='item') {
+        ed.selected=hit.id; ed.dragging=true; ed.dragId=hit.id;
+        var meta2=null; for(var i=0;i<G.UI.LAYOUT_META.length;i++) if(G.UI.LAYOUT_META[i].id===hit.id){meta2=G.UI.LAYOUT_META[i];break;}
+        var v2=lay[meta2.group][hit.id]; ed.dx=px/Math.max(1,this.vw)-v2.x; ed.dy=py/Math.max(1,this.vh)-v2.y; return true;
+      }
+      return false;
+    }
+    if (phase==='move' && ed.dragging && ed.dragId) {
+      var meta3=null; for(var j=0;j<G.UI.LAYOUT_META.length;j++) if(G.UI.LAYOUT_META[j].id===ed.dragId){meta3=G.UI.LAYOUT_META[j];break;}
+      if(meta3){var vv=lay[meta3.group][ed.dragId]; vv.x=px/Math.max(1,this.vw)-ed.dx; vv.y=py/Math.max(1,this.vh)-ed.dy; G.UI.clampLayoutItem(vv);}
+      return true;
+    }
+    if (phase==='end') { ed.dragging=false; ed.dragId=null; this.saveLayout(); return true; }
+    return false;
   };
 
   Game.prototype.toSelect = function () {
@@ -247,6 +324,7 @@ G.Game = (function () {
       this.state = STATE.PAUSE;
       this.menu.set([
         { label: 'RESUME', act: 'resume' },
+        { label: 'SETTINGS / CONTROLS', act: 'settings' },
         { label: 'ATTUNEMENT', act: 'upgrade', right: this.availablePoints() > 0 ? '+' + this.availablePoints() : '' },
         { label: this.save.settings.muted ? 'SOUND: OFF' : 'SOUND: ON', act: 'sound' },
         { label: 'RESTART LEVEL', act: 'restart' },
@@ -479,14 +557,6 @@ G.Game = (function () {
     var i = this.levelIndex;
     this.save.completed[i] = true;
     if (i + 1 > this.save.unlockedLevel && i + 1 < G.LEVELS.length) this.save.unlockedLevel = i + 1;
-
-    /* Completing a stage should visibly advance the player's RPG level.
-       Grant exactly one current-level XP threshold; existing enemy XP is
-       preserved, so the player always gains at least one level per cleared
-       stage without being given an arbitrary fixed amount. */
-    var completionXp = this.xpForLevel(this.save.level);
-    this.grantXp(completionXp, this.player.body.cx(), this.player.body.y);
-
     this.save.totalTime += this.runTime;
     G.Save.save(this.save);
     G.Audio.play('victory');
@@ -596,12 +666,28 @@ G.Game = (function () {
         break;
       case 'select': this.toSelect(); break;
       case 'title': this.toTitle(); break;
+      case 'settings': this.toSettings(); break;
+      case 'layout': this.toLayout(); break;
+      case 'settingsBack':
+        if (this.settingsReturnState === STATE.PAUSE) { this.state = STATE.PLAY; this.togglePause(); }
+        else this.toTitle();
+        break;
+      case 'resetLayout': this.resetControlLayout(); break;
+      case 'viewZoom': {
+        var zooms = [0.85, 1, 1.15];
+        var zi = zooms.indexOf(this.save.settings.cameraZoom || 1);
+        this.save.settings.cameraZoom = zooms[(zi + 1) % zooms.length];
+        G.Save.save(this.save); this.toSettings();
+        break;
+      }
       case 'upgrade': this.prevState = this.state; this.toUpgrade(); break;
       case 'sound':
         this.save.settings.muted = !this.save.settings.muted;
         G.Audio.setMuted(this.save.settings.muted);
         G.Save.save(this.save);
-        if (this.state === STATE.TITLE) this.toTitle(); else this.togglePauseMenuRefresh();
+        if (this.state === STATE.TITLE) this.toTitle();
+        else if (this.state === STATE.SETTINGS) this.toSettings();
+        else this.togglePauseMenuRefresh();
         break;
       case 'quality': {
         var order = ['low', 'med', 'high'];
@@ -609,7 +695,7 @@ G.Game = (function () {
         this.save.settings.quality = order[(cur + 1) % order.length];
         G.Save.save(this.save);
         this.resize();
-        this.toTitle();
+        if (this.state === STATE.SETTINGS) this.toSettings(); else this.toTitle();
         break;
       }
       case 'wipe':
@@ -640,6 +726,10 @@ G.Game = (function () {
     G.Audio.play('ui');
     switch (this.state) {
       case STATE.SELECT: this.toTitle(); break;
+      case STATE.SETTINGS:
+        if (this.settingsReturnState === STATE.PAUSE) { this.state = STATE.PLAY; this.togglePause(); } else this.toTitle();
+        break;
+      case STATE.LAYOUT: this.saveLayout(); this.toSettings(); break;
       case STATE.UPGRADE:
         if (this.prevState === STATE.PAUSE) { this.state = STATE.PLAY; this.togglePause(); }
         else if (this.prevState === STATE.DEAD) this.toDeath();
@@ -684,6 +774,12 @@ G.Game = (function () {
     // frame() advanced hit-stop, so direct update() callers could freeze a
     // boss phase transition indefinitely after a hit.
     this.hitstop.update(dt);
+
+    if (this.state === STATE.LAYOUT) {
+      if (G.Input.pressed('pause')) this.back();
+      G.Audio.tick(dt);
+      return;
+    }
 
     if (this.inMenu()) {
       this.overT += dt;
@@ -837,8 +933,8 @@ G.Game = (function () {
     var nearExit = Math.abs(b.cx() - ex) < 34 && Math.abs(b.y + b.h - ey) < 70;
     if (nearExit) {
       if (this.exitOpen) {
-        this.prompt = G.Input.hasTouch() ? 'JMP   enter the gate' : 'W  /  ↑   enter the gate';
-        if (G.Input.down('up') || G.Input.down('jump')) {
+        this.prompt = 'W  /  ↑   enter the gate';
+        if (G.Input.down('up') || G.Input.pressed('jump')) {
           G.Audio.play('door');
           this.completeLevel();
         }
@@ -929,6 +1025,19 @@ G.Game = (function () {
     }
   };
 
+  /* ============================================================ depth polish = */
+  Game.prototype.drawContactShadow = function (ctx, body, alpha, width) {
+    if (!body) return;
+    var x = body.x + body.w * 0.5, y = body.y + body.h + 3;
+    var w = width || Math.max(12, body.w * 0.95);
+    var h = Math.max(3, w * 0.24);
+    var grd = ctx.createRadialGradient(x, y, 0, x, y, w);
+    grd.addColorStop(0, 'rgba(0,0,0,' + (alpha == null ? 0.34 : alpha).toFixed(3) + ')');
+    grd.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.save(); ctx.fillStyle = grd;
+    ctx.beginPath(); ctx.ellipse(x, y, w, h, 0, 0, 6.2832); ctx.fill(); ctx.restore();
+  };
+
   /* ================================================================ draw = */
 
   Game.prototype.draw = function () {
@@ -936,11 +1045,15 @@ G.Game = (function () {
 
     if (this.state === STATE.TITLE) { G.UI.title(ctx, this); return; }
     if (this.state === STATE.SELECT) { this.drawMenuBackdrop(); G.UI.levelSelect(ctx, this); return; }
+    if (this.state === STATE.SETTINGS) { this.drawMenuBackdrop(); G.UI.settings(ctx, this); return; }
+    if (this.state === STATE.LAYOUT) { G.UI.layoutEditor(ctx, this); return; }
     if (this.state === STATE.UPGRADE) { this.drawMenuBackdrop(); G.UI.upgrades(ctx, this); return; }
 
     if (!this.world) { G.UI.loading(ctx, vw, vh, 'Preparing'); return; }
 
     var cam = this.camera;
+    var userZoom = this.save.settings.cameraZoom || 1;
+    var renderZoom = cam.zoom * userZoom;
     var bio = G.Biomes[this.level.biome] || G.Biomes.ruins;
 
     /* 1. sky + parallax */
@@ -948,9 +1061,9 @@ G.Game = (function () {
 
     /* 2. world + actors, under camera transform */
     ctx.save();
-    if (cam.zoom !== 1) {
+    if (renderZoom !== 1) {
       ctx.translate(vw * 0.5, vh * 0.5);
-      ctx.scale(cam.zoom, cam.zoom);
+      ctx.scale(renderZoom, renderZoom);
       ctx.translate(-vw * 0.5, -vh * 0.5);
     }
 
@@ -966,6 +1079,17 @@ G.Game = (function () {
     ctx.restore();
 
     G.Draw.ghosts(ctx, this.ghosts, cam);
+
+    // soft contact shadows add depth without changing collision or gameplay.
+    ctx.save();
+    ctx.translate(-ox, -oy);
+    if (this.player && !this.player.dead) this.drawContactShadow(ctx, this.player.body, 0.30, Math.max(12, this.player.body.w * 1.15));
+    for (var se = 0; se < this.enemies.length; se++) {
+      var sh = this.enemies[se];
+      if (!sh || sh.dead || sh.spawning > 0 || (sh.kind === 'flyer')) continue;
+      this.drawContactShadow(ctx, sh.body, 0.22, Math.max(10, sh.body.w * 0.95));
+    }
+    ctx.restore();
 
     // enemies behind, then player, so the player is never hidden
     ctx.save();

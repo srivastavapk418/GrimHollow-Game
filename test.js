@@ -643,10 +643,11 @@ check('pause round-trip preserves the level', () => {
 check('every menu action is handled (no silent no-ops)', () => {
   const acts = new Set();
   const screens = [() => game.toTitle(), () => game.toSelect(), () => game.toUpgrade(),
-                   () => { game.startLevel(0, false); game.togglePause(); }, () => game.toDeath()];
+                   () => game.toSettings(), () => game.toLayout(), () => { game.startLevel(0, false); game.togglePause(); }, () => game.toDeath()];
   for (const mk of screens) { mk(); for (const it of game.menu.items) acts.add(it.act); }
   const handled = new Set(['continue', 'select', 'title', 'upgrade', 'sound', 'quality', 'wipe',
-                           'level', 'stat', 'resume', 'restart', 'respawn', 'quit', 'next']);
+                           'level', 'stat', 'resume', 'restart', 'respawn', 'quit', 'next',
+                           'settings', 'layout', 'settingsBack', 'resetLayout', 'viewZoom']);
   const unknown = [...acts].filter(a => !handled.has(a));
   if (unknown.length) throw new Error('unhandled menu actions: ' + unknown.join(', '));
   note(`menu actions in use: ${[...acts].sort().join(', ')}`);
@@ -676,12 +677,25 @@ check('touch controls map to real input actions', () => {
     const hit = G.UI.touchHit(900, 500, b.x + b.w / 2, b.y + b.h / 2);
     if (hit !== b.act) throw new Error('hit test for ' + b.act + ' returned ' + hit);
   }
-  // Every action used by the mobile HUD must be reachable on a phone.
-  // Up/down are intentionally keyboard/menu actions rather than gameplay HUD buttons.
+  // every gameplay action must be reachable on a phone
   for (const a of valid) {
     if (!buttons.some(k => layout[k].act === a)) throw new Error('no touch button for "' + a + '"');
   }
-  note(`${buttons.length} touch buttons, all hit-testable, all 10 actions covered`);
+  note(`${buttons.length} touch buttons, all hit-testable, all gameplay touch actions covered`);
+  return true;
+});
+
+check('custom control/HUD layout persists and is editable', () => {
+  game.save.settings.layout = G.UI.cloneLayout(null);
+  const l = G.UI.getLayout(game);
+  l.touch.left.x = 0.20; l.touch.left.y = 0.70; l.touch.left.w = 0.14; l.touch.left.h = 0.14;
+  l.hud.health.x = 0.03; l.hud.health.w = 0.22;
+  l.hud.boss.x = 0.28; l.hud.boss.y = 0.04; l.hud.boss.w = 0.44;
+  G.UI.clampLayoutItem(l.touch.left); G.UI.clampLayoutItem(l.hud.health); G.UI.clampLayoutItem(l.hud.boss);
+  game.saveLayout();
+  const raw = G.Save.load();
+  if (!raw.settings.layout || Math.abs(raw.settings.layout.touch.left.x - 0.20) > 0.001) throw new Error('layout did not persist');
+  if (Object.keys(G.UI.touchLayout(900,500,raw.settings)).length !== 8) throw new Error('custom layout lost a touch control');
   return true;
 });
 
