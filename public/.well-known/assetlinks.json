@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.grimhollow.game",
+      "sha256_cert_fingerprints": [
+        "AA:8B:46:90:00:09:5C:32:2F:0C:D1:56:C5:BB:0B:2D:FC:81:0C:F0:99:48:D5:11:59:20:EB:EB:84:45:6F:F1"
+      ]
+    }
+  }
+]

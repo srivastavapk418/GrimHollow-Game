@@ -4,44 +4,52 @@
    Concatenates src/*.js into a single self-contained dist/index.html.
    No bundler, no dependencies. Run:  node build.js
    ========================================================================== */
-'use strict';
+"use strict";
 
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 const ROOT = __dirname;
-const SRC = path.join(ROOT, 'src');
-const DIST = path.join(ROOT, 'dist');
+const SRC = path.join(ROOT, "src");
+const DIST = path.join(ROOT, "dist");
 
-const VERSION = '1.0.3';
+const VERSION = "1.0.3";
 
-function log(s) { process.stdout.write(s + '\n'); }
+function log(s) {
+  process.stdout.write(s + "\n");
+}
 
 /* ------------------------------------------------------------ gather src -- */
-if (!fs.existsSync(SRC)) { console.error('missing src/'); process.exit(1); }
+if (!fs.existsSync(SRC)) {
+  console.error("missing src/");
+  process.exit(1);
+}
 
-const files = fs.readdirSync(SRC)
-  .filter(f => /^\d\d_.*\.js$/.test(f))
+const files = fs
+  .readdirSync(SRC)
+  .filter((f) => /^\d\d_.*\.js$/.test(f))
   .sort();
 
-if (files.length === 0) { console.error('no src/NN_*.js files found'); process.exit(1); }
+if (files.length === 0) {
+  console.error("no src/NN_*.js files found");
+  process.exit(1);
+}
 
-let bundle = '';
+let bundle = "";
 let totalRaw = 0;
 for (const f of files) {
-  const code = fs.readFileSync(path.join(SRC, f), 'utf8');
+  const code = fs.readFileSync(path.join(SRC, f), "utf8");
   totalRaw += code.length;
-  bundle += `\n/* ==== ${f} ${'='.repeat(Math.max(0, 62 - f.length))} */\n`;
+  bundle += `\n/* ==== ${f} ${"=".repeat(Math.max(0, 62 - f.length))} */\n`;
   // Each module declares `var G = ...` guarded; strip the redundant 'use strict'
   // so the concatenated result has exactly one at the top of the IIFE.
-  bundle += code.replace(/^\s*'use strict';\s*$/m, '');
-  bundle += '\n';
+  bundle += code.replace(/^\s*'use strict';\s*$/m, "");
+  bundle += "\n";
   log(`  + ${f.padEnd(16)} ${(code.length / 1024).toFixed(1).padStart(6)} KB`);
 }
 
 /* Wrap so `var G` is module-private and nothing leaks except window.G */
-const wrapped =
-`(function(){
+const wrapped = `(function(){
 'use strict';
 var G = {};
 if (typeof window !== 'undefined') window.G = G;
@@ -165,7 +173,7 @@ if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
 
 /* --------------------------------------------------------------- write ---- */
 fs.mkdirSync(DIST, { recursive: true });
-fs.writeFileSync(path.join(DIST, 'index.html'), html, 'utf8');
+fs.writeFileSync(path.join(DIST, "index.html"), html, "utf8");
 
 // Keep the distributable directory complete after every build: it can be
 // opened locally on PC or uploaded as-is to any static host.  These assets
@@ -176,25 +184,48 @@ const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
 <circle cx="256" cy="192" r="34" fill="#fff2d0"/>
 </svg>`;
 const manifest = {
-  name: 'Grimhollow', short_name: 'Grimhollow',
-  description: 'A dark action-platformer with ten levels and three bosses.',
-  start_url: './', scope: './', display: 'standalone',
-  background_color: '#06050a', theme_color: '#0a0810', orientation: 'landscape',
-  icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }]
+  name: "Grimhollow",
+  short_name: "Grimhollow",
+  description: "A dark action-platformer with ten levels and three bosses.",
+  start_url: "./",
+  scope: "./",
+  display: "standalone",
+  background_color: "#06050a",
+  theme_color: "#0a0810",
+  orientation: "landscape",
+  icons: [
+    { src: "icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+  ],
 };
 
-fs.writeFileSync(path.join(DIST, 'icon.svg'), iconSvg, 'utf8');
-const iconSet = require('./icons').writeIcons(DIST);
+fs.writeFileSync(path.join(DIST, "icon.svg"), iconSvg, "utf8");
+const iconSet = require("./icons").writeIcons(DIST);
 manifest.icons = [
-  { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-  { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-  { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-  { src: 'icon-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
-  { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+  { src: "icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+  { src: "icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+  { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+  {
+    src: "icon-maskable-192.png",
+    sizes: "192x192",
+    type: "image/png",
+    purpose: "maskable",
+  },
+  {
+    src: "icon-maskable-512.png",
+    sizes: "512x512",
+    type: "image/png",
+    purpose: "maskable",
+  },
 ];
-fs.writeFileSync(path.join(DIST, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+fs.writeFileSync(
+  path.join(DIST, "manifest.json"),
+  JSON.stringify(manifest, null, 2) + "\n",
+  "utf8",
+);
 const CACHE_NAME = `grimhollow-v${VERSION}-${html.length}`;
-const ASSETS = ['./', './index.html', './manifest.json', './icon.svg'].concat(iconSet.map(i => './' + i.name));
+const ASSETS = ["./", "./index.html", "./manifest.json", "./icon.svg"].concat(
+  iconSet.map((i) => "./" + i.name),
+);
 const serviceWorker = `const CACHE = '${CACHE_NAME}';
 const ASSETS = ${JSON.stringify(ASSETS)};
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting())));
@@ -213,22 +244,42 @@ self.addEventListener('fetch', event => {
   }));
 });
 `;
-fs.writeFileSync(path.join(DIST, 'sw.js'), serviceWorker, 'utf8');
+fs.writeFileSync(path.join(DIST, "sw.js"), serviceWorker, "utf8");
 
-log('');
+// Publish Android TWA verification file.
+const assetLinksSource = path.join(
+  ROOT,
+  "public",
+  ".well-known",
+  "assetlinks.json",
+);
+const assetLinksDestDir = path.join(DIST, ".well-known");
+
+if (fs.existsSync(assetLinksSource)) {
+  fs.mkdirSync(assetLinksDestDir, { recursive: true });
+  fs.copyFileSync(
+    assetLinksSource,
+    path.join(assetLinksDestDir, "assetlinks.json"),
+  );
+  log("  twa      .well-known/assetlinks.json");
+}
+
+log("");
 log(`  modules  ${files.length}`);
 log(`  src      ${(totalRaw / 1024).toFixed(1)} KB`);
 log(`  dist     ${(html.length / 1024).toFixed(1)} KB  ->  dist/index.html`);
-log('  pwa      manifest.json, sw.js, icon.svg + PNG icon set');
+log("  pwa      manifest.json, sw.js, icon.svg + PNG icon set");
 
 /* Sanity: the bundle must not contain a bare ES module keyword, and must not
    have unbalanced script tags that would truncate the HTML. */
 const problems = [];
-if (/^\s*(import|export)\s/m.test(bundle)) problems.push('ES module syntax found — breaks classic <script>');
-if (bundle.indexOf('</script') !== -1) problems.push('literal </script in source would terminate the tag early');
+if (/^\s*(import|export)\s/m.test(bundle))
+  problems.push("ES module syntax found — breaks classic <script>");
+if (bundle.indexOf("</script") !== -1)
+  problems.push("literal </script in source would terminate the tag early");
 if (problems.length) {
-  log('');
-  for (const p of problems) log('  ! ' + p);
+  log("");
+  for (const p of problems) log("  ! " + p);
   process.exit(1);
 }
-log('  ok       no bundle hazards');
+log("  ok       no bundle hazards");
